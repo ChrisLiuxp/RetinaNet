@@ -4,6 +4,7 @@ import torch
 import math
 from nets.resnet import resnet18,resnet34,resnet50,resnet101,resnet152
 from utils.anchors import Anchors
+from nets.head import FCOSClsCenterHead, FCOSRegHead, FCOSPositions
 
 class PyramidFeatures(nn.Module):
     def __init__(self, C3_size, C4_size, C5_size, feature_size=256):
@@ -172,41 +173,96 @@ class Retinanet(nn.Module):
         }[phi]
 
         self.fpn = PyramidFeatures(fpn_sizes[0], fpn_sizes[1], fpn_sizes[2])
-        self.regressionModel = RegressionModel(256)
-        self.classificationModel = ClassificationModel(256, num_classes=num_classes)
-        self.anchors = Anchors()
-        self._init_weights()
+        # self.regressionModel = RegressionModel(256)
+        # self.classificationModel = ClassificationModel(256, num_classes=num_classes)
+        # self.anchors = Anchors()
+        # self._init_weights()
+        self.num_classes = num_classes
+        self.cls_head = FCOSClsCenterHead(256,
+                                          self.num_classes,
+                                          num_layers=4,
+                                          prior=0.01)
+        self.regcenter_head = FCOSRegHead(256, num_layers=4)
 
-    def _init_weights(self):
-        if not self.pretrain_weights:
-            print("_init_weights")
-            for m in self.modules():
-                if isinstance(m, nn.Conv2d):
-                    n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                    m.weight.data.normal_(0, math.sqrt(2. / n))
-                elif isinstance(m, nn.BatchNorm2d):
-                    m.weight.data.fill_(1)
-                    m.bias.data.zero_()
-        
-        print("_init_classificationModel")
-        prior = 0.01
-        self.classificationModel.output.weight.data.fill_(0)
-        self.classificationModel.output.bias.data.fill_(-math.log((1.0 - prior) / prior))
-        print("_init_regressionModel")
-        self.regressionModel.output.weight.data.fill_(0)
-        self.regressionModel.output.bias.data.fill_(0)
+        self.strides = torch.tensor([8, 16, 32, 64, 128], dtype=torch.float)
+        self.positions = FCOSPositions(self.strides)
+
+        self.scales = nn.Parameter(torch.FloatTensor([1., 1., 1., 1., 1.]))
+
+    # def _init_weights(self):
+    #     if not self.pretrain_weights:
+    #         print("_init_weights")
+    #         for m in self.modules():
+    #             if isinstance(m, nn.Conv2d):
+    #                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+    #                 m.weight.data.normal_(0, math.sqrt(2. / n))
+    #             elif isinstance(m, nn.BatchNorm2d):
+    #                 m.weight.data.fill_(1)
+    #                 m.bias.data.zero_()
+    #
+    #     print("_init_classificationModel")
+    #     prior = 0.01
+    #     self.classificationModel.output.weight.data.fill_(0)
+    #     self.classificationModel.output.bias.data.fill_(-math.log((1.0 - prior) / prior))
+    #     print("_init_regressionModel")
+    #     self.regressionModel.output.weight.data.fill_(0)
+    #     self.regressionModel.output.bias.data.fill_(0)
 
 
+    # def forward(self, inputs):
+    #
+    #     p3, p4, p5 = self.backbone_net(inputs)
+    #
+    #     features = self.fpn([p3, p4, p5])
+    #
+    #     regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
+    #
+    #     classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
+    #
+    #     anchors = self.anchors(features)
+    #
+    #     return features, regression, classification, anchors
     def forward(self, inputs):
+        self.batch_size, _, _, _ = inputs.shape
+        device = inputs.device
 
         p3, p4, p5 = self.backbone_net(inputs)
 
         features = self.fpn([p3, p4, p5])
 
-        regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
 
-        classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
+        self.fpn_feature_sizes = []
+        cls_heads, reg_heads, center_heads = [], [], []
+        for feature, scale in zip(features, self.scales):
+            # 每层特征图的大小，如64×64
+            self.fpn_feature_sizes.append([feature.shape[3], feature.shape[2]])
+            cls_outs, center_outs = self.cls_head(feature)
+            # [N,num_classes,H,W] -> [N,H,W,num_classes]
+            cls_outs = cls_outs.permute(0, 2, 3, 1).contiguous()
+            cls_heads.append(cls_outs)
 
-        anchors = self.anchors(features)
+            reg_outs = self.regcenter_head(feature)
+            # [N,4,H,W] -> [N,H,W,4]
+            reg_outs = reg_outs.permute(0, 2, 3, 1).contiguous()
+            reg_outs = reg_outs * scale
+            reg_heads.append(reg_outs)
+            # [N,1,H,W] -> [N,H,W,1]
+            center_outs = center_outs.permute(0, 2, 3, 1).contiguous()
+            center_heads.append(center_outs)
 
-        return features, regression, classification, anchors
+        del features
+
+        self.fpn_feature_sizes = torch.tensor(
+            self.fpn_feature_sizes).to(device)
+
+        batch_positions = self.positions(self.batch_size,
+                                         self.fpn_feature_sizes)
+
+        # if input size:[B,3,640,640]
+        # features shape:[[B, 256, 80, 80],[B, 256, 40, 40],[B, 256, 20, 20],[B, 256, 10, 10],[B, 256, 5, 5]]
+        # cls_heads shape:[[B, 80, 80, 80],[B, 40, 40, 80],[B, 20, 20, 80],[B, 10, 10, 80],[B, 5, 5, 80]]
+        # reg_heads shape:[[B, 80, 80, 4],[B, 40, 40, 4],[B, 20, 20, 4],[B, 10, 10, 4],[B, 5, 5, 4]]
+        # center_heads shape:[[B, 80, 80, 1],[B, 40, 40, 1],[B, 20, 20, 1],[B, 10, 10, 1],[B, 5, 5, 1]]
+        # batch_positions shape:[[B, 80, 80, 2],[B, 40, 40, 2],[B, 20, 20, 2],[B, 10, 10, 2],[B, 5, 5, 2]]
+
+        return cls_heads, reg_heads, center_heads, batch_positions

@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import math
 
-class FCOSClsHead(nn.Module):
+class FCOSClsCenterHead(nn.Module):
     def __init__(self, inplanes, num_classes, num_layers=4, prior=0.01):
-        super(FCOSClsHead, self).__init__()
+        super(FCOSClsCenterHead, self).__init__()
         layers = []
         for _ in range(num_layers):
             layers.append(
@@ -12,46 +12,13 @@ class FCOSClsHead(nn.Module):
                           inplanes,
                           kernel_size=3,
                           stride=1,
-                          padding=1))
+                          padding=1,
+                          bias=True))
+            layers.append(nn.GroupNorm(32, inplanes))
             layers.append(nn.ReLU(inplace=True))
-        layers.append(
-            nn.Conv2d(inplanes,
-                      num_classes,
-                      kernel_size=3,
-                      stride=1,
-                      padding=1))
         self.cls_head = nn.Sequential(*layers)
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.normal_(m.weight, std=0.01)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, val=0)
-
-        prior = prior
-        b = -math.log((1 - prior) / prior)
-        self.cls_head[-1].bias.data.fill_(b)
-
-    def forward(self, x):
-        x = self.cls_head(x)
-
-        return x
-
-class FCOSRegCenterHead(nn.Module):
-    def __init__(self, inplanes, num_layers=4):
-        super(FCOSRegCenterHead, self).__init__()
-        layers = []
-        for _ in range(num_layers):
-            layers.append(
-                nn.Conv2d(inplanes,
-                          inplanes,
-                          kernel_size=3,
-                          stride=1,
-                          padding=1))
-            layers.append(nn.ReLU(inplace=True))
-        self.reg_head = nn.Sequential(*layers)
-        self.reg_out = nn.Conv2d(inplanes,
-                                 4,
+        self.cls_out = nn.Conv2d(inplanes,
+                                 num_classes,
                                  kernel_size=3,
                                  stride=1,
                                  padding=1)
@@ -67,12 +34,51 @@ class FCOSRegCenterHead(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, val=0)
 
+        prior = prior
+        b = -math.log((1 - prior) / prior)
+        self.cls_out.bias.data.fill_(b)
+
+    def forward(self, x):
+        x = self.cls_head(x)
+        cls_output = self.cls_out(x)
+        center_output = self.center_out(x)
+
+        return cls_output, center_output
+
+class FCOSRegHead(nn.Module):
+    def __init__(self, inplanes, num_layers=4):
+        super(FCOSRegHead, self).__init__()
+        layers = []
+        for _ in range(num_layers):
+            layers.append(
+                nn.Conv2d(inplanes,
+                          inplanes,
+                          kernel_size=3,
+                          stride=1,
+                          padding=1,
+                          bias=True))
+            layers.append(nn.GroupNorm(32, inplanes))
+            layers.append(nn.ReLU(inplace=True))
+        self.reg_head = nn.Sequential(*layers)
+        self.reg_out = nn.Conv2d(inplanes,
+                                 4,
+                                 kernel_size=3,
+                                 stride=1,
+                                 padding=1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, std=0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, val=0)
+
     def forward(self, x):
         x = self.reg_head(x)
         reg_output = self.reg_out(x)
-        center_output = self.center_out(x)
+        # center_output = self.center_out(x)
+        # return reg_output, center_output
 
-        return reg_output, center_output
+        return reg_output
 
 class FCOSPositions(nn.Module):
     def __init__(self, strides):
@@ -86,14 +92,19 @@ class FCOSPositions(nn.Module):
         device = fpn_feature_sizes.device
 
         one_sample_positions = []
+        # 遍历每层的步长和特征图大小
         for stride, fpn_feature_size in zip(self.strides, fpn_feature_sizes):
+            # 在单层特征图上，产生特征点坐标
             featrue_positions = self.generate_positions_on_feature_map(
                 fpn_feature_size, stride)
             featrue_positions = featrue_positions.to(device)
             one_sample_positions.append(featrue_positions)
 
         batch_positions = []
+        # 遍历每层特征点坐标
         for per_level_featrue_positions in one_sample_positions:
+            # unsqueeze(0)表示在第一个维度增加一个维度，这个维度是留给batch size的
+            # repeat(batch_size, 1, 1, 1)意思是第一个维度重复batch size遍，其他维度不变（重复一遍）
             per_level_featrue_positions = per_level_featrue_positions.unsqueeze(
                 0).repeat(batch_size, 1, 1, 1)
             batch_positions.append(per_level_featrue_positions)
