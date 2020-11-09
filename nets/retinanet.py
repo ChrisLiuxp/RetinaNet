@@ -477,6 +477,7 @@ class Retinanet(nn.Module):
         super(Retinanet, self).__init__()
         self.pretrain_weights = pretrain_weights
         self.backbone_net = Resnet(phi,pretrain_weights)
+        # 从五个版本的Backbone出来的c3、c4、c5的通道数，因此这个不是随意改的，是根据backbone来的
         fpn_sizes = {
             0: [128, 256, 512],
             1: [128, 256, 512],
