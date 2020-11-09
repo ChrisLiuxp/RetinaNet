@@ -12,6 +12,8 @@ from PIL import Image,ImageFont, ImageDraw
 from torch.autograd import Variable
 from nets.retinanet import Retinanet
 from utils.utils import non_max_suppression, bbox_iou, decodebox, letterbox_image, retinanet_correct_boxes
+from nets.decode import FCOSDecoder
+
 
 def preprocess_input(image):
     image /= 255
@@ -33,12 +35,13 @@ def preprocess_input(image):
 #--------------------------------------------#
 class RetinaNet(object):
     _defaults = {
-        "model_path": 'model_data/retinanet_resnet50.pth',
-        "classes_path": 'model_data/voc_classes.txt',
-        "phi": 2,
-        "confidence": 0.5,
-        "cuda": False,
-        "image_size": [600,600]
+        "model_path"    : 'model_data/Epoch90-Total_Loss1.0210-Val_Loss1.2323.pth',
+        "classes_path"  : 'model_data/voc_classes.txt',
+        "phi"           : 2,
+        "confidence"    : 0.4,
+        "iou"           : 0.3,
+        "cuda"          : False,
+        "image_size"    : [600,600]
     }
 
     @classmethod
@@ -169,6 +172,87 @@ class RetinaNet(object):
                 [tuple(text_origin), tuple(text_origin + label_size)],
                 fill=self.colors[self.class_names.index(predicted_class)])
             draw.text(text_origin, str(label,'UTF-8'), fill=(0, 0, 0), font=font)
+            del draw
+        return image
+
+
+
+    def detect_image_fcos(self, image):
+        image_shape = np.array(np.shape(image)[0:2])
+
+        crop_img = np.array(letterbox_image(image, (self.image_size[0], self.image_size[1])))
+        photo = np.array(crop_img, dtype=np.float32)
+        photo = np.transpose(preprocess_input(photo), (2, 0, 1))
+        images = []
+        images.append(photo)
+        images = np.asarray(images)
+
+        with torch.no_grad():
+            images = torch.from_numpy(images)
+            if self.cuda:
+                images = images.cuda()
+            cls_heads, reg_heads, center_heads, batch_positions = self.net(images)
+            decode = FCOSDecoder(image_shape[0],image_shape[1])
+
+            # batch_scores shape:[batch_size,max_detection_num]
+            # batch_classes shape:[batch_size,max_detection_num]
+            # batch_pred_bboxes shape[batch_size,max_detection_num,4]
+            batch_scores, batch_classes, batch_pred_bboxes, batch_pred_cls = decode(
+                cls_heads, reg_heads, center_heads, batch_positions)
+
+            detection = torch.cat([batch_pred_bboxes, batch_pred_cls], axis=-1)
+            batch_detections = non_max_suppression(detection, len(self.class_names),
+                                                   conf_thres=self.confidence,
+                                                   nms_thres=self.iou)
+        try:
+            batch_detections = batch_detections[0].cpu().numpy()
+        except:
+            return image
+
+        top_index = batch_detections[:, 4] > self.confidence
+        top_conf = batch_detections[top_index, 4]
+        top_label = np.array(batch_detections[top_index, -1], np.int32)
+        top_bboxes = np.array(batch_detections[top_index, :4])
+        top_xmin, top_ymin, top_xmax, top_ymax = np.expand_dims(top_bboxes[:, 0], -1), np.expand_dims(top_bboxes[:, 1], -1), np.expand_dims(top_bboxes[:, 2], -1), np.expand_dims(top_bboxes[:, 3], -1)
+
+        # 去掉灰条
+        boxes = retinanet_correct_boxes(top_ymin, top_xmin, top_ymax, top_xmax, np.array([self.image_size[0], self.image_size[0]]), image_shape)
+
+        font = ImageFont.truetype(font='model_data/simhei.ttf', size=np.floor(3e-2 * np.shape(image)[1] + 0.5).astype('int32'))
+
+        thickness = (np.shape(image)[0] + np.shape(image)[1]) // self.image_size[0]
+
+        for i, c in enumerate(top_label):
+            predicted_class = self.class_names[c]
+            score = top_conf[i]
+
+            top, left, bottom, right = boxes[i]
+            top = top - 5
+            left = left - 5
+            bottom = bottom + 5
+            right = right + 5
+
+            top = max(0, np.floor(top + 0.5).astype('int32'))
+            left = max(0, np.floor(left + 0.5).astype('int32'))
+            bottom = min(np.shape(image)[0], np.floor(bottom + 0.5).astype('int32'))
+            right = min(np.shape(image)[1], np.floor(right + 0.5).astype('int32'))
+
+            # 画框框
+            label = '{} {:.2f}'.format(predicted_class, score)
+            draw = ImageDraw.Draw(image)
+            label_size = draw.textsize(label, font)
+            label = label.encode('utf-8')
+            print(label)
+
+            if top - label_size[1] >= 0:
+                text_origin = np.array([left, top - label_size[1]])
+            else:
+                text_origin = np.array([left, top + 1])
+
+            for i in range(thickness):
+                draw.rectangle([left + i, top + i, right - i, bottom - i],outline=self.colors[self.class_names.index(predicted_class)])
+            draw.rectangle([tuple(text_origin), tuple(text_origin + label_size)],fill=self.colors[self.class_names.index(predicted_class)])
+            draw.text(text_origin, str(label, 'UTF-8'), fill=(0, 0, 0), font=font)
             del draw
         return image
 
