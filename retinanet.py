@@ -41,7 +41,7 @@ class RetinaNet(object):
         "confidence"    : 0.5,
         "iou"           : 0.3,
         "cuda"          : False,
-        "image_size"    : [640,640]
+        "image_size"    : [512,512]
     }
 
     @classmethod
