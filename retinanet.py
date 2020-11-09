@@ -41,6 +41,7 @@ class RetinaNet(object):
         "confidence"    : 0.5,
         "iou"           : 0.3,
         "cuda"          : False,
+        "BiFPN_on"      : False,
         "image_size"    : [512,512]
     }
 
@@ -73,7 +74,7 @@ class RetinaNet(object):
     #---------------------------------------------------#
     def generate(self):
         os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-        self.net = Retinanet(len(self.class_names),self.phi).eval()
+        self.net = Retinanet(len(self.class_names), self.phi, BiFPN_on=self.BiFPN_on).eval()
 
         # 加快模型训练的效率
         print('Loading weights into state dict...')

@@ -189,10 +189,14 @@ if __name__ == "__main__":
     #--------------------------------------------#
     phi = 2
     Cuda = False
+    BiFPN_on = True
     #--------------------------------------------#
     #   输入图像大小
     #--------------------------------------------#
-    input_shape = (512, 512)
+    if BiFPN_on:
+        input_shape = (512, 512)
+    else:
+        input_shape = (600, 600)
     annotation_path = '2007_train.txt'
 
     #--------------------------------------------#
@@ -203,7 +207,7 @@ if __name__ == "__main__":
     num_classes = len(class_names)
     
     # 创建模型
-    model = Retinanet(num_classes, phi, True)
+    model = Retinanet(num_classes, phi, True, BiFPN_on)
     
     #-------------------------------------------#
     #   权值文件的下载请看README

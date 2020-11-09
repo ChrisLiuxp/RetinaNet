@@ -473,10 +473,11 @@ class Resnet(nn.Module):
 
 class Retinanet(nn.Module):
 
-    def __init__(self, num_classes, phi, pretrain_weights=False):
+    def __init__(self, num_classes, phi, pretrain_weights=False, BiFPN_on=False):
         super(Retinanet, self).__init__()
         self.pretrain_weights = pretrain_weights
         self.backbone_net = Resnet(phi,pretrain_weights)
+        self.BiFPN_on = BiFPN_on
         # 从五个版本的Backbone出来的c3、c4、c5的通道数，因此这个不是随意改的，是根据backbone来的
         fpn_sizes = {
             0: [128, 256, 512],
@@ -485,30 +486,33 @@ class Retinanet(nn.Module):
             3: [512, 1024, 2048],
             4: [512, 1024, 2048],
         }[phi]
+        # BiFPN所用的通道数(对应五个Backbone版本)
+        self.fpn_num_filters = [256, 256, 256, 256, 256, 256]
+        if self.BiFPN_on:
+            # BiFPN的重复次数
+            self.fpn_cell_repeats = [3, 3, 3, 3, 3, 3, 3, 3]
+            self.bifpn = nn.Sequential(
+                *[BiFPN(self.fpn_num_filters[phi],
+                        fpn_sizes,
+                        True if _ == 0 else False,
+                        attention=True if phi < 5 else False)
+                  for _ in range(self.fpn_cell_repeats[phi])])
+        else:
+            self.fpn = PyramidFeatures(fpn_sizes[0], fpn_sizes[1], fpn_sizes[2])
+
         #
-        # self.fpn = PyramidFeatures(fpn_sizes[0], fpn_sizes[1], fpn_sizes[2])
         # self.regressionModel = RegressionModel(256)
         # self.classificationModel = ClassificationModel(256, num_classes=num_classes)
         # self.anchors = Anchors()
         # self._init_weights()
         #
-        # BiFPN的重复次数
-        self.fpn_cell_repeats = [3, 3, 3, 3, 3, 3, 3, 3]
-        # BiFPN所用的通道数
-        self.fpn_num_filters = [256, 256, 256, 256, 256, 256, 256, 256]
-        self.num_channels = 256
-        self.bifpn = nn.Sequential(
-            *[BiFPN(self.fpn_num_filters[phi],
-                    fpn_sizes,
-                    True if _ == 0 else False,
-                    attention=True if phi < 5 else False)
-              for _ in range(self.fpn_cell_repeats[phi])])
+
         self.num_classes = num_classes
-        self.cls_head = FCOSClsCenterHead(self.num_channels,
+        self.cls_head = FCOSClsCenterHead(self.fpn_num_filters[phi],
                                           self.num_classes,
                                           num_layers=4,
                                           prior=0.01)
-        self.regcenter_head = FCOSRegHead(self.num_channels, num_layers=4)
+        self.regcenter_head = FCOSRegHead(self.fpn_num_filters[phi], num_layers=4)
 
         self.strides = torch.tensor([8, 16, 32, 64, 128], dtype=torch.float)
         self.positions = FCOSPositions(self.strides)
@@ -554,9 +558,12 @@ class Retinanet(nn.Module):
 
         p3, p4, p5 = self.backbone_net(inputs)
 
-        # features = self.fpn([p3, p4, p5])
-        features = (p3, p4, p5)
-        features = self.bifpn(features)
+        if self.BiFPN_on:
+            features = (p3, p4, p5)
+            features = self.bifpn(features)
+        else:
+            features = self.fpn([p3, p4, p5])
+
 
         del p3, p4, p5
 
