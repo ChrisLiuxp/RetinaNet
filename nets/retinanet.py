@@ -498,7 +498,7 @@ class Retinanet(nn.Module):
                         attention=True if phi < 5 else False)
                   for _ in range(self.fpn_cell_repeats[phi])])
         else:
-            self.fpn = PyramidFeatures(fpn_sizes[0], fpn_sizes[1], fpn_sizes[2])
+            self.fpn = PyramidFeatures(fpn_sizes[0], fpn_sizes[1], fpn_sizes[2], feature_size=self.fpn_num_filters[phi])
 
         #
         # self.regressionModel = RegressionModel(256)
@@ -508,10 +508,7 @@ class Retinanet(nn.Module):
         #
 
         self.num_classes = num_classes
-        self.cls_head = FCOSClsCenterHead(self.fpn_num_filters[phi],
-                                          self.num_classes,
-                                          num_layers=4,
-                                          prior=0.01)
+        self.cls_head = FCOSClsCenterHead(self.fpn_num_filters[phi], self.num_classes, num_layers=4, prior=0.01)
         self.regcenter_head = FCOSRegHead(self.fpn_num_filters[phi], num_layers=4)
 
         self.strides = torch.tensor([8, 16, 32, 64, 128], dtype=torch.float)
@@ -589,11 +586,9 @@ class Retinanet(nn.Module):
 
         del features
 
-        self.fpn_feature_sizes = torch.tensor(
-            self.fpn_feature_sizes).to(device)
+        self.fpn_feature_sizes = torch.tensor(self.fpn_feature_sizes).to(device)
 
-        batch_positions = self.positions(self.batch_size,
-                                         self.fpn_feature_sizes)
+        batch_positions = self.positions(self.batch_size, self.fpn_feature_sizes)
 
         # if input size:[B,3,640,640]
         # features shape:[[B, 256, 80, 80],[B, 256, 40, 40],[B, 256, 20, 20],[B, 256, 10, 10],[B, 256, 5, 5]]
