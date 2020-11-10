@@ -30,7 +30,7 @@ class FCOSLoss(nn.Module):
         # reg_heads shape:[[B, 80, 80, 4],[B, 40, 40, 4],[B, 20, 20, 4],[B, 10, 10, 4],[B, 5, 5, 4]]
         # center_heads shape:[[B, 80, 80, 1],[B, 40, 40, 1],[B, 20, 20, 1],[B, 10, 10, 1],[B, 5, 5, 1]]
         # batch_positions shape:[[B, 80, 80, 2],[B, 40, 40, 2],[B, 20, 20, 2],[B, 10, 10, 2],[B, 5, 5, 2]]
-        # annotations shape: [GT个数，5] 例如[[262., 210., 460., 490.,  14.], [295., 305., 460., 471.,  11.]])
+        # annotations是包含batch_size个元素的list 元素shape:[一张图GT个数, 5] 例如[[262., 210., 460., 490.,  14.], [295., 305., 460., 471.,  11.]])
         cls_preds, reg_preds, center_preds, batch_targets = self.get_batch_position_annotations(
             cls_heads, reg_heads, center_heads, batch_positions, annotations, cuda=cuda)
 
@@ -40,8 +40,8 @@ class FCOSLoss(nn.Module):
         # center_preds shape:[B, H1×W1+H2×W2+H3×W3+H4×W4+H5×W5, 1]
         cls_preds = torch.sigmoid(cls_preds)
         reg_preds = torch.exp(reg_preds)
-        center_preds = torch.sigmoid(center_preds) # ?????????????????????????????????????????????????????????????????????
-        batch_targets[:, :, 5:6] = torch.sigmoid(batch_targets[:, :, 5:6])# ?????????????????????????????????????????????????????????????????????
+        center_preds = torch.sigmoid(center_preds)
+        batch_targets[:, :, 5:6] = torch.sigmoid(batch_targets[:, :, 5:6])
 
         # device = annotations.device
         cls_loss, reg_loss, center_ness_loss = [], [], []

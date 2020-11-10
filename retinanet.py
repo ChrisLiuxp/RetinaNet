@@ -35,13 +35,13 @@ def preprocess_input(image):
 #--------------------------------------------#
 class RetinaNet(object):
     _defaults = {
-        "model_path"    : 'model_data/Epoch140-Total_Loss0.9740-Val_Loss1.2838.pth',
+        "model_path"    : 'model_data/EDAF/Epoch103-Total_Loss1.0252-Val_Loss1.3218.pth',
         "classes_path"  : 'model_data/voc_classes.txt',
         "phi"           : 2,
         "confidence"    : 0.5,
         "iou"           : 0.3,
         "cuda"          : False,
-        "BiFPN_on"      : False,
+        "BiFPN_on"      : True,
         "image_size"    : [512,512]
     }
 

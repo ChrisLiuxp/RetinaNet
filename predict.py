@@ -18,7 +18,7 @@ retinanet = RetinaNet()
 #         r_image.show()
 
 try:
-    image = Image.open('img/street.jpg')
+    image = Image.open('img/9.jpg')
 except:
     print('Open Error! Try again!')
 else:

@@ -122,6 +122,8 @@ def fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,E
                     targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets]
 
             optimizer.zero_grad()
+            # images shape:[batch_size, 3, input_image_size, input_image_size]
+            # targets是包含batch_size个元素的list 元素shape:[一张图GT个数, 5]
             cls_heads, reg_heads, center_heads, batch_positions = net(images)
             cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets, cuda=cuda)
             loss = cls_loss + reg_loss + center_ness_loss
@@ -189,7 +191,7 @@ if __name__ == "__main__":
     #--------------------------------------------#
     phi = 2
     Cuda = False
-    BiFPN_on = True
+    BiFPN_on = False
     #--------------------------------------------#
     #   输入图像大小
     #--------------------------------------------#
