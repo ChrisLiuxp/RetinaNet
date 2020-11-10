@@ -11,7 +11,7 @@ import torch.backends.cudnn as cudnn
 from PIL import Image,ImageFont, ImageDraw
 from torch.autograd import Variable
 from nets.retinanet import Retinanet
-from utils.utils import non_max_suppression, bbox_iou, decodebox, letterbox_image, retinanet_correct_boxes
+from utils.utils import non_max_suppression, soft_non_max_suppression, bbox_iou, decodebox, letterbox_image, retinanet_correct_boxes
 from nets.decode import FCOSDecoder
 
 
@@ -202,7 +202,7 @@ class RetinaNet(object):
                 cls_heads, reg_heads, center_heads, batch_positions)
 
             detection = torch.cat([batch_pred_bboxes, batch_pred_cls], axis=-1)
-            batch_detections = non_max_suppression(detection, len(self.class_names),
+            batch_detections = soft_non_max_suppression(detection, len(self.class_names),
                                                    conf_thres=self.confidence,
                                                    nms_thres=self.iou)
         try:
