@@ -323,17 +323,6 @@ if __name__ == "__main__":
     # model_dict.update(pretrained_dict)
     # model.load_state_dict(model_dict)
     # print('Finished!')
-
-    net = model.train()
-
-    if Cuda:
-        net = torch.nn.DataParallel(model)
-        cudnn.benchmark = True
-        net = net.cuda()
-
-    # focal_loss = FocalLoss()
-    fcos_loss = FCOSLoss()
-
     # optimizer = optim.Adam(net.parameters(),lr)
     # # 学习率阶层性下降
     # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
@@ -356,6 +345,16 @@ if __name__ == "__main__":
             Freeze_Epoch = start_epoch+1
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
 
+
+    net = model.train()
+
+    if Cuda:
+        net = torch.nn.DataParallel(model)
+        cudnn.benchmark = True
+        net = net.cuda()
+
+    # focal_loss = FocalLoss()
+    fcos_loss = FCOSLoss()
 
     # 0.1用于验证，0.9用于训练
     val_split = 0.1
