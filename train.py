@@ -267,8 +267,8 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
     print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
     print('Total Loss: %.4f || Val Loss: %.4f ' % (total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
 
-    print('Saving state, iter:', str(epoch+1))
-    torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+    # print('Saving state, iter:', str(epoch+1))
+    # torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
     return val_loss/(epoch_size_val+1)
 
 
@@ -283,6 +283,12 @@ if __name__ == "__main__":
     phi = 2
     Cuda = False
     BiFPN_on = False
+    RESUME = False
+
+    start_epoch = -1
+    # Init_Epoch = 0
+    Freeze_Epoch = 25
+    Unfreeze_Epoch = 50
     #--------------------------------------------#
     #   输入图像大小
     #--------------------------------------------#
@@ -328,6 +334,29 @@ if __name__ == "__main__":
     # focal_loss = FocalLoss()
     fcos_loss = FCOSLoss()
 
+    # optimizer = optim.Adam(net.parameters(),lr)
+    # # 学习率阶层性下降
+    # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+
+    params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.SGD(params, lr=0.0003, momentum=0.9, weight_decay=0.0005)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
+
+    freezeflag = True
+    if RESUME:
+        path_checkpoint = "./model_parameter/test/ckpt_best_50.pth"  # 断点路径
+        checkpoint = torch.load(path_checkpoint)  # 加载断点
+
+        model.load_state_dict(checkpoint['net'])  # 加载模型可学习参数
+
+        optimizer.load_state_dict(checkpoint['optimizer'])  # 加载优化器参数
+        start_epoch = checkpoint['epoch']  # 设置开始的epoch
+        if start_epoch+1 > Freeze_Epoch:
+            freezeflag = False
+            Freeze_Epoch = start_epoch+1
+        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+
+
     # 0.1用于验证，0.9用于训练
     val_split = 0.1
     with open(annotation_path) as f:
@@ -346,20 +375,10 @@ if __name__ == "__main__":
     #   Epoch总训练世代
     #   提示OOM或者显存不足请调小Batch_size
     #------------------------------------------------------#
-    if True:
-        lr = 1e-4
+    if freezeflag:
+        # lr = 1e-4
         Batch_size = 1
-        Init_Epoch = 0
-        Freeze_Epoch = 25
         
-        # optimizer = optim.Adam(net.parameters(),lr)
-        # # 学习率阶层性下降
-        # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
-
-        params = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.SGD(params, lr=0.0003, momentum=0.9, weight_decay=0.0005)
-        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
-
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
         gen = DataLoader(train_dataset, batch_size=Batch_size, num_workers=4, pin_memory=True,
@@ -375,22 +394,34 @@ if __name__ == "__main__":
         for param in model.backbone_net.parameters():
             param.requires_grad = False
 
-        for epoch in range(Init_Epoch,Freeze_Epoch):
+        for epoch in range(start_epoch+1,Freeze_Epoch):
             val_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
             lr_scheduler.step(val_loss)
 
+            if epoch % 10 == 0:
+                print('epoch:', epoch)
+                print('learning rate:', optimizer.state_dict()['param_groups'][0]['lr'])
+                checkpoint = {
+                    "net": model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    "epoch": epoch,
+                    'lr_schedule': lr_scheduler.state_dict()
+                }
+                if not os.path.isdir("./model_parameter/test"):
+                    os.mkdir("./model_parameter/test")
+                torch.save(checkpoint, './model_parameter/test/ckpt_best_%s.pth' % (str(epoch)))
+
     if True:
-        lr = 1e-5
+        # lr = 1e-5
         Batch_size = 1
-        Freeze_Epoch = 25
-        Unfreeze_Epoch = 50
 
         # optimizer = optim.Adam(net.parameters(),lr)
         # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
 
-        params = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.SGD(params, lr=0.0003, momentum=0.9, weight_decay=0.0005)
-        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
+        if freezeflag:
+            params = [p for p in model.parameters() if p.requires_grad]
+            optimizer = torch.optim.SGD(params, lr=0.0003, momentum=0.9, weight_decay=0.0005)
+            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
@@ -410,3 +441,16 @@ if __name__ == "__main__":
         for epoch in range(Freeze_Epoch,Unfreeze_Epoch):
             val_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
             lr_scheduler.step(val_loss)
+
+            if epoch % 10 == 0:
+                print('epoch:', epoch)
+                print('learning rate:', optimizer.state_dict()['param_groups'][0]['lr'])
+                checkpoint = {
+                    "net": model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    "epoch": epoch,
+                    'lr_schedule': lr_scheduler.state_dict()
+                }
+                if not os.path.isdir("./model_parameter/test"):
+                    os.mkdir("./model_parameter/test")
+                torch.save(checkpoint, './model_parameter/test/ckpt_best_%s.pth' % (str(epoch)))
