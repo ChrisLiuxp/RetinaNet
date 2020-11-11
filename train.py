@@ -16,6 +16,7 @@ from nets.retinanet import Retinanet
 from nets.retinanet_training import FocalLoss
 from nets.fcos_training import FCOSLoss
 from tqdm import tqdm
+from utils.utils import warmup_lr_scheduler
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
@@ -107,6 +108,7 @@ def fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,E
     total_ctn_loss = 0
     total_loss = 0
     val_loss = 0
+
     start_time = time.time()
     with tqdm(total=epoch_size,desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
         for iteration, batch in enumerate(gen):
@@ -149,6 +151,95 @@ def fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,E
 
             start_time = time.time()
 
+    print('Start Validation')
+    with tqdm(total=epoch_size_val, desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
+        for iteration, batch in enumerate(genval):
+            if iteration >= epoch_size_val:
+                break
+            images_val, targets_val = batch[0], batch[1]
+
+            with torch.no_grad():
+                if cuda:
+                    images_val = Variable(torch.from_numpy(images_val).type(torch.FloatTensor)).cuda()
+                    targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)).cuda() for ann in targets_val]
+                else:
+                    images_val = Variable(torch.from_numpy(images_val).type(torch.FloatTensor))
+                    targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets_val]
+                optimizer.zero_grad()
+                cls_heads, reg_heads, center_heads, batch_positions = net(images_val)
+                cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets_val, cuda=cuda)
+                loss = cls_loss + reg_loss + center_ness_loss
+                val_loss += loss.item()
+
+            pbar.set_postfix(**{'total_loss': val_loss / (iteration + 1)})
+            pbar.update(1)
+    print('Finish Validation')
+    print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
+    print('Total Loss: %.4f || Val Loss: %.4f ' % (total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+
+    print('Saving state, iter:', str(epoch+1))
+    torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+    return val_loss/(epoch_size_val+1)
+
+
+def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
+    total_r_loss = 0
+    total_c_loss = 0
+    total_ctn_loss = 0
+    total_loss = 0
+    val_loss = 0
+
+    lr_scheduler = None
+    if epoch == 0:
+        warmup_factor = 1. / 1000
+        warmup_iters = min(1000, len(gen) - 1)
+
+        lr_scheduler = warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor)
+
+    start_time = time.time()
+    with tqdm(total=epoch_size,desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
+        for iteration, batch in enumerate(gen):
+            if iteration >= epoch_size:
+                break
+            images, targets = batch[0], batch[1]
+            with torch.no_grad():
+                if cuda:
+                    images = Variable(torch.from_numpy(images).type(torch.FloatTensor)).cuda()
+                    targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)).cuda() for ann in targets]
+                else:
+                    images = Variable(torch.from_numpy(images).type(torch.FloatTensor))
+                    targets = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets]
+
+            optimizer.zero_grad()
+            # images shape:[batch_size, 3, input_image_size, input_image_size]
+            # targets是包含batch_size个元素的list 元素shape:[一张图GT个数, 5]
+            cls_heads, reg_heads, center_heads, batch_positions = net(images)
+            cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets, cuda=cuda)
+            loss = cls_loss + reg_loss + center_ness_loss
+            if cls_loss.item() == 0.0 or reg_loss.item() == 0.0:
+                optimizer.zero_grad()
+                continue
+
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+            total_r_loss += cls_loss.item()
+            total_c_loss += reg_loss.item()
+            total_ctn_loss += center_ness_loss.item()
+            waste_time = time.time() - start_time
+
+            pbar.set_postfix(**{'Conf Loss'         : total_c_loss / (iteration+1),
+                                'Regression Loss'   : total_r_loss / (iteration+1),
+                                'Center-ness Loss'  : total_ctn_loss / (iteration+1),
+                                'lr'                : get_lr(optimizer),
+                                'step/s'            : waste_time})
+            pbar.update(1)
+
+            start_time = time.time()
+
+            if lr_scheduler is not None:
+                lr_scheduler.step()
 
     print('Start Validation')
     with tqdm(total=epoch_size_val, desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
@@ -261,8 +352,13 @@ if __name__ == "__main__":
         Init_Epoch = 0
         Freeze_Epoch = 25
         
-        optimizer = optim.Adam(net.parameters(),lr)
-        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+        # optimizer = optim.Adam(net.parameters(),lr)
+        # # 学习率阶层性下降
+        # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+
+        params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.SGD(params, lr=0.0003, momentum=0.9, weight_decay=0.0005)
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
@@ -280,7 +376,7 @@ if __name__ == "__main__":
             param.requires_grad = False
 
         for epoch in range(Init_Epoch,Freeze_Epoch):
-            val_loss = fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
+            val_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
             lr_scheduler.step(val_loss)
 
     if True:
@@ -289,8 +385,12 @@ if __name__ == "__main__":
         Freeze_Epoch = 25
         Unfreeze_Epoch = 50
 
-        optimizer = optim.Adam(net.parameters(),lr)
-        lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+        # optimizer = optim.Adam(net.parameters(),lr)
+        # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+
+        params = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.SGD(params, lr=0.0003, momentum=0.9, weight_decay=0.0005)
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
@@ -308,5 +408,5 @@ if __name__ == "__main__":
             param.requires_grad = True
 
         for epoch in range(Freeze_Epoch,Unfreeze_Epoch):
-            val_loss = fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
+            val_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
             lr_scheduler.step(val_loss)
