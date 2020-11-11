@@ -278,9 +278,9 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
             "epoch": epoch,
             'lr_scheduler': lr_scheduler.state_dict()
         }
-        if not os.path.isdir("./model_parameter/test"):
-            os.mkdir("./model_parameter/test")
-        torch.save(checkpoint, './model_parameter/test/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % ((epoch + 1), total_loss / (epoch_size + 1), val_loss / (epoch_size_val + 1)))
+        if not os.path.isdir("./model_data/checkpoint"):
+            os.mkdir("./model_data/checkpoint")
+        torch.save(checkpoint, './model_data/checkpoint/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % ((epoch + 1), total_loss / (epoch_size + 1), val_loss / (epoch_size_val + 1)))
 
     return val_loss/(epoch_size_val+1)
 
