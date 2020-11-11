@@ -404,7 +404,7 @@ if __name__ == "__main__":
                     "net": model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     "epoch": epoch,
-                    'lr_schedule': lr_scheduler.state_dict()
+                    'lr_scheduler': lr_scheduler.state_dict()
                 }
                 if not os.path.isdir("./model_parameter/test"):
                     os.mkdir("./model_parameter/test")
@@ -448,7 +448,7 @@ if __name__ == "__main__":
                     "net": model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     "epoch": epoch,
-                    'lr_schedule': lr_scheduler.state_dict()
+                    'lr_scheduler': lr_scheduler.state_dict()
                 }
                 if not os.path.isdir("./model_parameter/test"):
                     os.mkdir("./model_parameter/test")
