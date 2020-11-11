@@ -269,6 +269,19 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
 
     # print('Saving state, iter:', str(epoch+1))
     # torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+    if epoch % 10 == 0:
+        print('epoch:', epoch)
+        print('learning rate:', optimizer.state_dict()['param_groups'][0]['lr'])
+        checkpoint = {
+            "net": model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            "epoch": epoch,
+            'lr_scheduler': lr_scheduler.state_dict()
+        }
+        if not os.path.isdir("./model_parameter/test"):
+            os.mkdir("./model_parameter/test")
+        torch.save(checkpoint, './model_parameter/test/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % ((epoch + 1), total_loss / (epoch_size + 1), val_loss / (epoch_size_val + 1)))
+
     return val_loss/(epoch_size_val+1)
 
 
@@ -397,18 +410,6 @@ if __name__ == "__main__":
             val_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
             lr_scheduler.step(val_loss)
 
-            if epoch % 10 == 0:
-                print('epoch:', epoch)
-                print('learning rate:', optimizer.state_dict()['param_groups'][0]['lr'])
-                checkpoint = {
-                    "net": model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    "epoch": epoch,
-                    'lr_scheduler': lr_scheduler.state_dict()
-                }
-                if not os.path.isdir("./model_parameter/test"):
-                    os.mkdir("./model_parameter/test")
-                torch.save(checkpoint, './model_parameter/test/ckpt_best_%s.pth' % (str(epoch)))
 
     if True:
         # lr = 1e-5
@@ -440,16 +441,3 @@ if __name__ == "__main__":
         for epoch in range(Freeze_Epoch,Unfreeze_Epoch):
             val_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
             lr_scheduler.step(val_loss)
-
-            if epoch % 10 == 0:
-                print('epoch:', epoch)
-                print('learning rate:', optimizer.state_dict()['param_groups'][0]['lr'])
-                checkpoint = {
-                    "net": model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    "epoch": epoch,
-                    'lr_scheduler': lr_scheduler.state_dict()
-                }
-                if not os.path.isdir("./model_parameter/test"):
-                    os.mkdir("./model_parameter/test")
-                torch.save(checkpoint, './model_parameter/test/ckpt_best_%s.pth' % (str(epoch)))
