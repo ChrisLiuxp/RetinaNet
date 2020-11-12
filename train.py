@@ -142,11 +142,11 @@ def fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,E
             total_ctn_loss += center_ness_loss.item()
             waste_time = time.time() - start_time
 
-            pbar.set_postfix(**{'Conf Loss'         : total_c_loss / (iteration+1),
-                                'Regression Loss'   : total_r_loss / (iteration+1),
-                                'Center-ness Loss'  : total_ctn_loss / (iteration+1),
-                                'lr'                : get_lr(optimizer),
-                                'step/s'            : waste_time})
+            pbar.set_postfix(**{'Classification Loss': total_c_loss / (iteration+1),
+                                'Regression Loss'    : total_r_loss / (iteration+1),
+                                'Center-ness Loss'   : total_ctn_loss / (iteration+1),
+                                'lr'                 : get_lr(optimizer),
+                                'step/s'             : waste_time})
             pbar.update(1)
 
             start_time = time.time()
@@ -230,11 +230,11 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
             total_ctn_loss += center_ness_loss.item()
             waste_time = time.time() - start_time
 
-            pbar.set_postfix(**{'Conf Loss'         : total_c_loss / (iteration+1),
-                                'Regression Loss'   : total_r_loss / (iteration+1),
-                                'Center-ness Loss'  : total_ctn_loss / (iteration+1),
-                                'lr'                : get_lr(optimizer),
-                                'step/s'            : waste_time})
+            pbar.set_postfix(**{'Classification Loss': total_c_loss / (iteration+1),
+                                'Regression Loss'    : total_r_loss / (iteration+1),
+                                'Center-ness Loss'   : total_ctn_loss / (iteration+1),
+                                'lr'                 : get_lr(optimizer),
+                                'step/s'             : waste_time})
             pbar.update(1)
 
             start_time = time.time()
@@ -266,13 +266,11 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
             pbar.update(1)
     print('Finish Validation')
     print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
-    print('Total Loss: %.4f || Val Loss: %.4f ' % (total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+    print('Total Loss: %.4f || Val Loss: %.4f || Learning rate: %.4f' % (total_loss/(epoch_size+1), val_loss/(epoch_size_val+1), optimizer.state_dict()['param_groups'][0]['lr']))
 
     # print('Saving state, iter:', str(epoch+1))
     # torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
     if epoch % 10 == 0:
-        print('epoch:', epoch)
-        print('learning rate:', optimizer.state_dict()['param_groups'][0]['lr'])
         checkpoint = {
             "net": model.state_dict(),
             'optimizer': optimizer.state_dict(),
