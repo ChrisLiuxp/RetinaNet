@@ -296,18 +296,27 @@ if __name__ == "__main__":
     #--------------------------------------------#
     phi = 2
     # 是否使用GPU
-    Cuda = False
+    Cuda = True
     # 是否需要BiFPN
-    BiFPN_on = False
+    BiFPN_on = True
     # 是否断点续训
     RESUME = False
     # 是否加载模型进行FineTurn
     FineTurn = False
 
+    # 起始epoch(不需更改)
     start_epoch = -1
-    # Init_Epoch = 0
-    Freeze_Epoch = 25
-    Unfreeze_Epoch = 50
+    # 冻结backbone训练模型，[start_epoch+1, Freeze_Epoch]
+    Freeze_Epoch = 100
+    # 解冻backbone训练模型，[Freeze_Epoch+1, Unfreeze_Epoch]
+    Unfreeze_Epoch = 200
+
+    # 冻结、解冻backbone训练模型的batch_size
+    Freeze_Batch_size = 32
+    Unfreeze_Batch_size = 16
+    # 冻结backbone训练模型的初始学习率
+    lr = 1e-4
+
     #--------------------------------------------#
     #   输入图像大小
     #--------------------------------------------#
@@ -344,15 +353,13 @@ if __name__ == "__main__":
         model.load_state_dict(model_dict)
         print('Finished!')
 
-    # 初始学习率大小
-    lr = 1e-4
     optimizer = optim.Adam(model.parameters(),lr)
     # 学习率阶层性下降
     # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
     # 学习率余弦退火下降
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
-    # 是否执行冻结backbone的训练
+    # 是否执行冻结backbone的训练（不需手动更改）
     freezeflag = True
     if RESUME:
         path_checkpoint = "./model_parameter/test/ckpt_best_50.pth"  # 断点路径
@@ -397,18 +404,16 @@ if __name__ == "__main__":
     #   提示OOM或者显存不足请调小Batch_size
     #------------------------------------------------------#
     if freezeflag:
-        # lr = 1e-4
-        Batch_size = 32
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
-        gen = DataLoader(train_dataset, batch_size=Batch_size, num_workers=4, pin_memory=True,
+        gen = DataLoader(train_dataset, batch_size=Freeze_Batch_size, num_workers=4, pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
-        gen_val = DataLoader(val_dataset, batch_size=Batch_size, num_workers=4,pin_memory=True,
+        gen_val = DataLoader(val_dataset, batch_size=Freeze_Batch_size, num_workers=4,pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
 
-        epoch_size = num_train//Batch_size
-        epoch_size_val = num_val//Batch_size
+        epoch_size = num_train//Freeze_Batch_size
+        epoch_size_val = num_val//Freeze_Batch_size
         #------------------------------------#
         #   冻结一定部分训练
         #------------------------------------#
@@ -421,8 +426,8 @@ if __name__ == "__main__":
 
 
     if True:
+        # 解冻backbone训练模型的初始学习率
         lr = 1e-5
-        Batch_size = 16
 
         if freezeflag:
             optimizer = optim.Adam(net.parameters(),lr)
@@ -431,13 +436,13 @@ if __name__ == "__main__":
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
-        gen = DataLoader(train_dataset, batch_size=Batch_size, num_workers=4, pin_memory=True,
+        gen = DataLoader(train_dataset, batch_size=Unfreeze_Batch_size, num_workers=4, pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
-        gen_val = DataLoader(val_dataset, batch_size=Batch_size, num_workers=4,pin_memory=True,
+        gen_val = DataLoader(val_dataset, batch_size=Unfreeze_Batch_size, num_workers=4,pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
 
-        epoch_size = num_train//Batch_size
-        epoch_size_val = num_val//Batch_size
+        epoch_size = num_train//Unfreeze_Batch_size
+        epoch_size_val = num_val//Unfreeze_Batch_size
         #------------------------------------#
         #   解冻后训练
         #------------------------------------#
