@@ -59,13 +59,13 @@ def fit_one_epoch(net,focal_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoc
 
             torch.nn.utils.clip_grad_norm_(net.parameters(), 1e-2)
             optimizer.step()
-            
+
             total_loss += loss
             total_r_loss += r_loss
             total_c_loss += c_loss
             waste_time = time.time() - start_time
 
-            pbar.set_postfix(**{'total_loss': total_loss.item() / (iteration + 1), 
+            pbar.set_postfix(**{'total_loss': total_loss.item() / (iteration + 1),
                                 'lr'        : get_lr(optimizer),
                                 'step/s'    : waste_time})
             pbar.update(1)
@@ -189,12 +189,12 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
     total_loss = 0
     val_loss = 0
 
-    lr_scheduler = None
-    if epoch == 0:
-        warmup_factor = 1. / 1000
-        warmup_iters = min(1000, len(gen) - 1)
-
-        lr_scheduler = warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor)
+    # lr_scheduler = None
+    # if epoch == 0:
+    #     warmup_factor = 1. / 1000
+    #     warmup_iters = min(1000, len(gen) - 1)
+    #
+    #     lr_scheduler = warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor)
 
     start_time = time.time()
     with tqdm(total=epoch_size,desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
@@ -221,6 +221,7 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
                 continue
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 1e-2)
             optimizer.step()
 
             total_loss += loss.item()
@@ -238,8 +239,8 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
 
             start_time = time.time()
 
-            if lr_scheduler is not None:
-                lr_scheduler.step()
+            # if lr_scheduler is not None:
+            #     lr_scheduler.step()
 
     print('Start Validation')
     with tqdm(total=epoch_size_val, desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
@@ -287,16 +288,21 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
 
 if __name__ == "__main__":
     #--------------------------------------------#
-    #   phi == 0 : resnet18 
-    #   phi == 1 : resnet34 
-    #   phi == 2 : resnet50 
-    #   phi == 3 : resnet101 
-    #   phi == 4 : resnet152 
+    #   phi == 0 : resnet18
+    #   phi == 1 : resnet34
+    #   phi == 2 : resnet50
+    #   phi == 3 : resnet101
+    #   phi == 4 : resnet152
     #--------------------------------------------#
     phi = 2
+    # 是否使用GPU
     Cuda = False
+    # 是否需要BiFPN
     BiFPN_on = False
+    # 是否断点续训
     RESUME = False
+    # 是否加载模型进行FineTurn
+    FineTurn = False
 
     start_epoch = -1
     # Init_Epoch = 0
@@ -314,36 +320,39 @@ if __name__ == "__main__":
     #--------------------------------------------#
     #   训练自己的模型需要修改txt
     #--------------------------------------------#
-    classes_path = 'model_data/voc_classes.txt'   
+    classes_path = 'model_data/voc_classes.txt'
     class_names = get_classes(classes_path)
     num_classes = len(class_names)
-    
+
     # 创建模型
     model = Retinanet(num_classes, phi, True, BiFPN_on)
-    
+
     #-------------------------------------------#
     #   权值文件的下载请看README
     #-------------------------------------------#
-    # model_path = "model_data/retinanet_resnet50.pth"
-    # # 加快模型训练的效率
-    # print('Loading weights into state dict...')
-    # model_dict = model.state_dict()
-    # if Cuda:
-    #     pretrained_dict = torch.load(model_path)
-    # else:
-    #     pretrained_dict = torch.load(model_path, map_location='cpu')
-    # pretrained_dict = {k: v for k, v in pretrained_dict.items() if np.shape(model_dict[k]) ==  np.shape(v)}
-    # model_dict.update(pretrained_dict)
-    # model.load_state_dict(model_dict)
-    # print('Finished!')
-    # optimizer = optim.Adam(net.parameters(),lr)
-    # # 学习率阶层性下降
-    # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+    if FineTurn:
+        model_path = "model_data/retinanet_resnet50.pth"
+        # 加快模型训练的效率
+        print('Loading weights into state dict...')
+        model_dict = model.state_dict()
+        if Cuda:
+            pretrained_dict = torch.load(model_path)
+        else:
+            pretrained_dict = torch.load(model_path, map_location='cpu')
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if np.shape(model_dict[k]) ==  np.shape(v)}
+        model_dict.update(pretrained_dict)
+        model.load_state_dict(model_dict)
+        print('Finished!')
 
-    params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.SGD(params, lr=0.0003, momentum=0.9, weight_decay=0.0005)
+    # 初始学习率大小
+    lr = 1e-4
+    optimizer = optim.Adam(model.parameters(),lr)
+    # 学习率阶层性下降
+    # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+    # 学习率余弦退火下降
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
+    # 是否执行冻结backbone的训练
     freezeflag = True
     if RESUME:
         path_checkpoint = "./model_parameter/test/ckpt_best_50.pth"  # 断点路径
@@ -378,7 +387,7 @@ if __name__ == "__main__":
     np.random.seed(None)
     num_val = int(len(lines)*val_split)
     num_train = len(lines) - num_val
-    
+
     #------------------------------------------------------#
     #   主干特征提取网络特征通用，冻结训练可以加快训练速度
     #   也可以在训练初期防止权值被破坏。
@@ -389,13 +398,13 @@ if __name__ == "__main__":
     #------------------------------------------------------#
     if freezeflag:
         # lr = 1e-4
-        Batch_size = 1
-        
+        Batch_size = 32
+
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
         gen = DataLoader(train_dataset, batch_size=Batch_size, num_workers=4, pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
-        gen_val = DataLoader(val_dataset, batch_size=Batch_size, num_workers=4,pin_memory=True, 
+        gen_val = DataLoader(val_dataset, batch_size=Batch_size, num_workers=4,pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
 
         epoch_size = num_train//Batch_size
@@ -412,22 +421,19 @@ if __name__ == "__main__":
 
 
     if True:
-        # lr = 1e-5
-        Batch_size = 1
-
-        # optimizer = optim.Adam(net.parameters(),lr)
-        # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+        lr = 1e-5
+        Batch_size = 16
 
         if freezeflag:
-            params = [p for p in model.parameters() if p.requires_grad]
-            optimizer = torch.optim.SGD(params, lr=0.0003, momentum=0.9, weight_decay=0.0005)
+            optimizer = optim.Adam(net.parameters(),lr)
+            # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
             lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
         gen = DataLoader(train_dataset, batch_size=Batch_size, num_workers=4, pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
-        gen_val = DataLoader(val_dataset, batch_size=Batch_size, num_workers=4,pin_memory=True, 
+        gen_val = DataLoader(val_dataset, batch_size=Batch_size, num_workers=4,pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
 
         epoch_size = num_train//Batch_size
