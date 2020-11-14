@@ -245,6 +245,7 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
             # if lr_scheduler is not None:
             #     lr_scheduler.step()
 
+    net.eval()
     print('Start Validation')
     with tqdm(total=epoch_size_val, desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
         for iteration, batch in enumerate(genval):
@@ -267,6 +268,7 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
 
             pbar.set_postfix(**{'total_loss': val_loss / (iteration + 1)})
             pbar.update(1)
+    net.train()
     print('Finish Validation')
     # print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
     print('Total Loss: %.4f || Val Loss: %.4f || Learning rate: %.3g \n' % (total_loss/(epoch_size+1), val_loss/(epoch_size_val+1), get_lr(optimizer)))
@@ -342,7 +344,7 @@ if __name__ == "__main__":
             pretrained_dict = torch.load(model_path, map_location='cpu')
         pretrained_dict = {k: v for k, v in pretrained_dict.items() if np.shape(model_dict[k]) ==  np.shape(v)}
         model_dict.update(pretrained_dict)
-        model.load_state_dict(model_dict)
+        model.load_state_dict(model_dict['net'])
         print('Finished!')
 
     optimizer = optim.Adam(model.parameters(),lr)
@@ -409,14 +411,26 @@ if __name__ == "__main__":
     #   Freeze_Epoch为冻结训练的世代
     #   Epoch总训练世代
     #   提示OOM或者显存不足请调小Batch_size
+    #      torch.utils.data.DataLoader（
+    #                             dataset，#数据加载
+    #                             batch_size = 1，#批处理大小设置
+    #                             shuffle = False，#是否进项洗牌操作
+    #                             sampler = None，#指定数据加载中使用的索引/键的序列
+    #                             batch_sampler = None，#和sampler类似
+    #                             num_workers = 0，#是否进行多进程加载数据设置
+    #                             collat​​e_fn = None，#是否合并样本列表以形成一小批Tensor
+    #                             pin_memory = False，#如果True，数据加载器会在返回之前将Tensors复制到CUDA固定内存
+    #                             drop_last = False，#True如果数据集大小不能被批处理大小整除，则设置为删除最后一个不完整的批处理。
+    #                             timeout = 0，#如果为正，则为从工作人员收集批处理的超时值
+    #                             worker_init_fn = None ）
     #------------------------------------------------------#
     if freezeflag:
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
-        gen = DataLoader(train_dataset, batch_size=Freeze_Batch_size, num_workers=4, pin_memory=True,
+        gen = DataLoader(train_dataset, shuffle=True, batch_size=Freeze_Batch_size, num_workers=4, pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
-        gen_val = DataLoader(val_dataset, batch_size=Freeze_Batch_size, num_workers=4,pin_memory=True,
+        gen_val = DataLoader(val_dataset, shuffle=True, batch_size=Freeze_Batch_size, num_workers=4,pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
 
         epoch_size = num_train//Freeze_Batch_size
@@ -432,7 +446,7 @@ if __name__ == "__main__":
             # lr_scheduler.step(val_loss)
             lr_scheduler.step()
 
-            if epoch % 10 == 0:
+            if epoch == 0 or (epoch + 1) % 10 == 0:
                 checkpoint = {
                     "net": model.state_dict(),
                     'optimizer': optimizer.state_dict(),
@@ -458,9 +472,9 @@ if __name__ == "__main__":
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
-        gen = DataLoader(train_dataset, batch_size=Unfreeze_Batch_size, num_workers=4, pin_memory=True,
+        gen = DataLoader(train_dataset, shuffle=True, batch_size=Unfreeze_Batch_size, num_workers=4, pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
-        gen_val = DataLoader(val_dataset, batch_size=Unfreeze_Batch_size, num_workers=4,pin_memory=True,
+        gen_val = DataLoader(val_dataset, shuffle=True, batch_size=Unfreeze_Batch_size, num_workers=4,pin_memory=True,
                                 drop_last=True, collate_fn=retinanet_dataset_collate)
 
         epoch_size = num_train//Unfreeze_Batch_size
@@ -476,7 +490,7 @@ if __name__ == "__main__":
             # lr_scheduler.step(val_loss)
             lr_scheduler.step()
 
-            if epoch % 10 == 0:
+            if epoch == 0 or (epoch + 1) % 10 == 0:
                 checkpoint = {
                     "net": model.state_dict(),
                     'optimizer': optimizer.state_dict(),
