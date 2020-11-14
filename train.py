@@ -222,6 +222,9 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 1e-2)
+            # optimizer.step()通常用在每个mini-batch之中，而scheduler.step()通常用
+            # 在epoch里面,但是不绝对，可以根据具体的需求来做。只有用了optimizer.step()，
+            # 模型才会更新，而scheduler.step()是对lr进行调整。
             optimizer.step()
 
             total_loss += loss.item()
@@ -265,23 +268,13 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
             pbar.set_postfix(**{'total_loss': val_loss / (iteration + 1)})
             pbar.update(1)
     print('Finish Validation')
-    print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
-    print('Total Loss: %.4f || Val Loss: %.4f || Learning rate: %.4f' % (total_loss/(epoch_size+1), val_loss/(epoch_size_val+1), optimizer.state_dict()['param_groups'][0]['lr']))
+    # print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
+    print('Total Loss: %.4f || Val Loss: %.4f || Learning rate: %.4f \n' % (total_loss/(epoch_size+1), val_loss/(epoch_size_val+1), get_lr(optimizer)))
 
     # print('Saving state, iter:', str(epoch+1))
     # torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
-    if epoch % 10 == 0:
-        checkpoint = {
-            "net": model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            "epoch": epoch,
-            'lr_scheduler': lr_scheduler.state_dict()
-        }
-        if not os.path.isdir("./model_data/checkpoint"):
-            os.mkdir("./model_data/checkpoint")
-        torch.save(checkpoint, './model_data/checkpoint/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % ((epoch + 1), total_loss / (epoch_size + 1), val_loss / (epoch_size_val + 1)))
 
-    return val_loss/(epoch_size_val+1)
+    return val_loss/(epoch_size_val+1), total_loss/(epoch_size+1)
 
 
 if __name__ == "__main__":
@@ -303,7 +296,7 @@ if __name__ == "__main__":
     FineTurn = False
 
     # 起始epoch(不需更改)
-    start_epoch = -1
+    start_epoch = 0
     # 冻结backbone训练模型，[start_epoch+1, Freeze_Epoch]
     Freeze_Epoch = 100
     # 解冻backbone训练模型，[Freeze_Epoch+1, Unfreeze_Epoch]
@@ -337,6 +330,7 @@ if __name__ == "__main__":
     #-------------------------------------------#
     #   权值文件的下载请看README
     #-------------------------------------------#
+    # 【开关】是否fineturn
     if FineTurn:
         model_path = "model_data/retinanet_resnet50.pth"
         # 加快模型训练的效率
@@ -355,26 +349,41 @@ if __name__ == "__main__":
     # 学习率阶层性下降
     # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
     # 学习率余弦退火下降
+    # T_0就是初始restart的epoch数目，T_mult就是重启之后因子，默认是1。我觉得可以这样理解，每个restart后，T_0 = T_0 * T_mult
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
     # 是否执行冻结backbone的训练（不需手动更改）
     freezeflag = True
+    # 【开关】是否断点续训
     if RESUME:
-        path_checkpoint = "./model_parameter/test/ckpt_best_50.pth"  # 断点路径
+        path_checkpoint = "model_data/checkpoint/Epoch1-Total_Loss2.2986-Val_Loss1.7803.pth"  # 断点路径
         checkpoint = torch.load(path_checkpoint)  # 加载断点
+        print('Loading checkpoint into state dict...')
 
         model.load_state_dict(checkpoint['net'])  # 加载模型可学习参数
 
         optimizer.load_state_dict(checkpoint['optimizer'])  # 加载优化器参数
-        start_epoch = checkpoint['epoch']  # 设置开始的epoch
-        if start_epoch+1 > Freeze_Epoch:
+        if Cuda:
+            # 因为optimizer加载参数时,tensor默认在CPU上
+            # 故需将所有的tensor都放到cuda,
+            # 否则: 在optimizer.step()处报错：
+            # RuntimeError: expected device cpu but got device cuda:0
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.cuda()
+
+        start_epoch = checkpoint['epoch']+1  # 设置开始的epoch
+        if start_epoch > Freeze_Epoch:
             freezeflag = False
-            Freeze_Epoch = start_epoch+1
+            Freeze_Epoch = start_epoch
+
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        print('Finished!')
 
 
     net = model.train()
-
+    # 【开关】是否使用GPU
     if Cuda:
         net = torch.nn.DataParallel(model)
         cudnn.benchmark = True
@@ -418,9 +427,24 @@ if __name__ == "__main__":
         for param in model.backbone_net.parameters():
             param.requires_grad = False
 
-        for epoch in range(start_epoch+1,Freeze_Epoch):
-            val_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
-            lr_scheduler.step(val_loss)
+        for epoch in range(start_epoch,Freeze_Epoch):
+            val_loss, total_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
+            # lr_scheduler.step(val_loss)
+            lr_scheduler.step()
+
+            if epoch % 10 == 0:
+                checkpoint = {
+                    "net": model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    "epoch": epoch,
+                    'lr_scheduler': lr_scheduler.state_dict()
+                }
+                if not os.path.isdir("./model_data/checkpoint"):
+                    os.mkdir("./model_data/checkpoint")
+                torch.save(checkpoint, './model_data/checkpoint/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % (
+                    (epoch + 1), total_loss , val_loss))
+                print('Saving state, iter:', str(epoch + 1))
+                print('\n')
 
 
     if True:
@@ -448,5 +472,20 @@ if __name__ == "__main__":
             param.requires_grad = True
 
         for epoch in range(Freeze_Epoch,Unfreeze_Epoch):
-            val_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
-            lr_scheduler.step(val_loss)
+            val_loss, total_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
+            # lr_scheduler.step(val_loss)
+            lr_scheduler.step()
+
+            if epoch % 10 == 0:
+                checkpoint = {
+                    "net": model.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    "epoch": epoch,
+                    'lr_scheduler': lr_scheduler.state_dict()
+                }
+                if not os.path.isdir("./model_data/checkpoint"):
+                    os.mkdir("./model_data/checkpoint")
+                torch.save(checkpoint, './model_data/checkpoint/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % (
+                    (epoch + 1), total_loss , val_loss))
+                print('Saving state, iter:', str(epoch + 1))
+                print('\n')
