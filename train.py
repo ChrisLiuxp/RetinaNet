@@ -269,7 +269,7 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
             pbar.update(1)
     print('Finish Validation')
     # print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
-    print('Total Loss: %.4f || Val Loss: %.4f || Learning rate: %.4f \n' % (total_loss/(epoch_size+1), val_loss/(epoch_size_val+1), get_lr(optimizer)))
+    print('Total Loss: %.4f || Val Loss: %.4f || Learning rate: %.3g \n' % (total_loss/(epoch_size+1), val_loss/(epoch_size_val+1), get_lr(optimizer)))
 
     # print('Saving state, iter:', str(epoch+1))
     # torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
