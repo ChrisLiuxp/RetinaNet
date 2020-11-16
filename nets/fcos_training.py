@@ -12,13 +12,19 @@ class FCOSLoss(nn.Module):
                  mi=[[-1, 64], [64, 128], [128, 256], [256, 512], [512, INF]],
                  alpha=0.25,
                  gamma=2.,
-                 epsilon=1e-4):
+                 reg_weight=2.,
+                 epsilon=1e-4,
+                 center_sample_radius=1.5,
+                 use_center_sample=True):
         super(FCOSLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.reg_weight = reg_weight
         self.epsilon = epsilon
         self.strides = strides
         self.mi = mi
+        self.use_center_sample = use_center_sample
+        self.center_sample_radius = center_sample_radius
 
     def forward(self, cls_heads, reg_heads, center_heads, batch_positions, annotations, cuda=True):
         """
@@ -41,7 +47,10 @@ class FCOSLoss(nn.Module):
         cls_preds = torch.sigmoid(cls_preds)
         reg_preds = torch.exp(reg_preds)
         center_preds = torch.sigmoid(center_preds)
-        batch_targets[:, :, 5:6] = torch.sigmoid(batch_targets[:, :, 5:6])
+        # batch_targets[:, :, 5:6] = torch.sigmoid(batch_targets[:, :, 5:6])
+        reg_preds = reg_preds.type_as(cls_preds)
+        center_preds = center_preds.type_as(cls_preds)
+        batch_targets = batch_targets.type_as(cls_preds)
 
         # device = annotations.device
         cls_loss, reg_loss, center_ness_loss = [], [], []
@@ -76,9 +85,17 @@ class FCOSLoss(nn.Module):
         # 此举就是避免分母为0
         valid_image_num = 1 if valid_image_num == 0 else valid_image_num
         # 求平均loss
-        cls_loss = sum(cls_loss) / valid_image_num
-        reg_loss = sum(reg_loss) / valid_image_num
-        center_ness_loss = sum(center_ness_loss) / valid_image_num
+        # cls_loss = sum(cls_loss) / valid_image_num
+        # reg_loss = sum(reg_loss) / valid_image_num
+        # center_ness_loss = sum(center_ness_loss) / valid_image_num
+        if valid_image_num == 0:
+            cls_loss = sum(cls_loss)
+            reg_loss = sum(reg_loss)
+            center_ness_loss = sum(center_ness_loss)
+        else:
+            cls_loss = sum(cls_loss) / valid_image_num
+            reg_loss = sum(reg_loss) / valid_image_num
+            center_ness_loss = sum(center_ness_loss) / valid_image_num
 
         return cls_loss, reg_loss, center_ness_loss
 
@@ -89,10 +106,16 @@ class FCOSLoss(nn.Module):
         per_image_cls_preds:[points_num,num_classes]
         per_image_targets:[points_num,8]
         """
+        device = per_image_cls_preds.device
         per_image_cls_preds = torch.clamp(per_image_cls_preds,
                                           min=self.epsilon,
                                           max=1. - self.epsilon)
+        positive_points_num = per_image_targets[
+            per_image_targets[:, 4] > 0].shape[0]
         num_classes = per_image_cls_preds.shape[1]
+
+        if positive_points_num == 0:
+            return torch.tensor(0.).to(device)
 
         # generate 80 binary ground truth classes for each anchor
         loss_ground_truth = F.one_hot(per_image_targets[:, 4].long(),
@@ -114,8 +137,8 @@ class FCOSLoss(nn.Module):
         one_image_focal_loss = focal_weight * bce_loss
 
         one_image_focal_loss = one_image_focal_loss.sum()
-        positive_points_num = per_image_targets[
-            per_image_targets[:, 4] > 0].shape[0]
+        # positive_points_num = per_image_targets[
+        #     per_image_targets[:, 4] > 0].shape[0]
         # according to the original paper,We divide the focal loss by the number of positive sample anchors
         one_image_focal_loss = one_image_focal_loss / positive_points_num
 
@@ -195,7 +218,7 @@ class FCOSLoss(nn.Module):
         # use center_ness_targets as the weight of gious loss
         gious_loss = gious_loss * center_ness_targets
         gious_loss = gious_loss.sum() / positive_points_num
-        gious_loss = 2. * gious_loss
+        gious_loss = self.reg_weight * gious_loss
 
         return gious_loss
 
@@ -236,9 +259,11 @@ class FCOSLoss(nn.Module):
         Assign a ground truth target for each position on feature map
         """
         # device = annotations.device
-        batch_mi = []
+        # batch_mi = []
+        batch_mi, batch_stride = [], []
         # 遍历每层的reg_head的输出和最大回归距离mi
-        for reg_head, mi in zip(reg_heads, self.mi):
+        # for reg_head, mi in zip(reg_heads, self.mi):
+        for reg_head, mi, stride in zip(reg_heads, self.mi, self.strides):
             if cuda:
                 mi = torch.tensor(mi).cuda()
                 B, H, W, _ = reg_head.shape
@@ -250,11 +275,20 @@ class FCOSLoss(nn.Module):
             per_level_mi = per_level_mi + mi
             # batch_mi shape: [B, H, W, 2]，这个2就是self.mi里面，每一个mi对应的上下区间
             batch_mi.append(per_level_mi)
+            if cuda:
+                per_level_stride = torch.zeros(B, H, W, 1).cuda()
+            else:
+                per_level_stride = torch.zeros(B, H, W, 1)
+            per_level_stride = per_level_stride + stride
+            batch_stride.append(per_level_stride)
 
-        cls_preds,reg_preds,center_preds,all_points_position,all_points_mi=[],[],[],[],[]
-        # 遍历每层的分类、回归、centerness、位置、mi
-        for cls_pred, reg_pred, center_pred, per_level_position, per_level_mi in zip(
-                cls_heads, reg_heads, center_heads, batch_positions, batch_mi):
+        # cls_preds,reg_preds,center_preds,all_points_position,all_points_mi=[],[],[],[],[]
+        # # 遍历每层的分类、回归、centerness、位置、mi
+        # for cls_pred, reg_pred, center_pred, per_level_position, per_level_mi in zip(
+        #         cls_heads, reg_heads, center_heads, batch_positions, batch_mi):
+        cls_preds, reg_preds, center_preds, all_points_position, all_points_mi, all_points_stride = [], [], [], [], [], []
+        for cls_pred, reg_pred, center_pred, per_level_position, per_level_mi, per_level_stride in zip(
+                cls_heads, reg_heads, center_heads, batch_positions, batch_mi, batch_stride):
             # [B, H, W, C] -> [B, H×W, C]
             cls_pred = cls_pred.view(cls_pred.shape[0], -1, cls_pred.shape[-1])
             # [B, H, W, 4] -> [B, H×W, 4]
@@ -268,12 +302,16 @@ class FCOSLoss(nn.Module):
             # [B, H, W, 2] -> [B, H×W, 2]
             per_level_mi = per_level_mi.view(per_level_mi.shape[0], -1,
                                              per_level_mi.shape[-1])
+            per_level_stride = per_level_stride.view(
+                per_level_stride.shape[0], -1, per_level_stride.shape[-1])
+
             # cls_preds为装有5层cls_pred的list
             cls_preds.append(cls_pred)
             reg_preds.append(reg_pred)
             center_preds.append(center_pred)
             all_points_position.append(per_level_position)
             all_points_mi.append(per_level_mi)
+            all_points_stride.append(per_level_stride)
 
         # axis=1按列拼接，由原来5个层的list，变为[B, H1×W1+H2×W2+H3×W3+H4×W4+H5×W5, 20]
         cls_preds = torch.cat(cls_preds, axis=1)
@@ -285,12 +323,15 @@ class FCOSLoss(nn.Module):
         all_points_position = torch.cat(all_points_position, axis=1)
         # axis=1按列拼接，由原来5个层的list，变为[B, H1×W1+H2×W2+H3×W3+H4×W4+H5×W5, 2]
         all_points_mi = torch.cat(all_points_mi, axis=1)
+        all_points_stride = torch.cat(all_points_stride, axis=1)
         # 至此，就消除了各个特征层的概念了，把所有的层都混一起了
 
         batch_targets = []
         # 遍历每个batch size中的每个图片的上的点、mi、GT标注
-        for per_image_position, per_image_mi, per_image_annotations in zip(
-                all_points_position, all_points_mi, annotations):
+        # for per_image_position, per_image_mi, per_image_annotations in zip(
+        #         all_points_position, all_points_mi, annotations):
+        for per_image_position, per_image_mi, per_image_stride, per_image_annotations in zip(
+                all_points_position, all_points_mi, all_points_stride, annotations):
             if per_image_annotations.shape[0] != 0:
                 # 筛选GT对应的分类>=0的GT
                 per_image_annotations = per_image_annotations[
@@ -318,13 +359,20 @@ class FCOSLoss(nn.Module):
                 candidates = candidates + per_image_gt_bboxes.unsqueeze(0)
                 # per_image_position：[H1×W1+H2×W2+H3×W3+H4×W4+H5×W5,2] -> [H1×W1+H2×W2+H3×W3+H4×W4+H5×W5,1,2] -> [H1×W1+H2×W2+H3×W3+H4×W4+H5×W5,GT数量,4]
                 # per_image_position shape：[坐标点数量, GT数量, 4]，他就是坐标点数量个，GT数量行4列的一个张量，GT数量行4列数据是重复的中心点坐标
-                per_image_position = per_image_position.unsqueeze(1).repeat(1, annotaion_num, 2)
+                # per_image_position = per_image_position.unsqueeze(1).repeat(1, annotaion_num, 2)
+                per_image_position = per_image_position.unsqueeze(1).repeat(1, annotaion_num, 1)
+
+                if self.use_center_sample:
+                    candidates_center = (candidates[:, :, 2:4] + candidates[:, :, 0:2]) / 2
+                    judge_distance = per_image_stride * self.center_sample_radius
+                    judge_distance = judge_distance.repeat(1, annotaion_num)
 
                 # 中心点坐标距离左边和上边的距离：l,t
                 # candidates shape:[坐标点数量, GT数量, 4]
                 candidates[:, :, 0:2] = per_image_position[:, :, 0:2] - candidates[:, :, 0:2]
                 # 中心点坐标距离右边和下边的距离：r,b
-                candidates[:, :, 2:4] = candidates[:, :, 2:4] - per_image_position[:, :, 2:4]
+                # candidates[:, :, 2:4] = candidates[:, :, 2:4] - per_image_position[:, :, 2:4]
+                candidates[:, :, 2:4] = candidates[:, :, 2:4] - per_image_position[:, :, 0:2]
                 # 取最后一维（就是l,t,r,b）的最小值，keepdims主要用于保持矩阵的二维特性
                 # candidates_min_value shape:[坐标点数量, GT数量, 1]
                 candidates_min_value, _ = candidates.min(axis=-1, keepdim=True)
@@ -333,6 +381,14 @@ class FCOSLoss(nn.Module):
                 # get all negative reg targets which points ctr out of gt box
                 # 这样一乘，就消除了上面candidates坐标中所有的负数
                 candidates = candidates * sample_flag
+
+                # if use center sample get all negative reg targets which points not in center circle
+                if self.use_center_sample:
+                    compute_distance = torch.sqrt(
+                        (per_image_position[:, :, 0] - candidates_center[:, :, 0]) ** 2 +
+                        (per_image_position[:, :, 1] - candidates_center[:, :, 1]) ** 2)
+                    center_sample_flag = (compute_distance < judge_distance).int().unsqueeze(-1)
+                    candidates = candidates * center_sample_flag
 
                 # get all negative reg targets which assign ground turth not in range of mi
                 # 取最后一维（就是l,t,r,b）的最大值，keepdims主要用于保持矩阵的二维特性

@@ -8,6 +8,8 @@ from nets.head import FCOSClsCenterHead, FCOSRegHead, FCOSPositions
 from nets.layers import MemoryEfficientSwish, Swish
 from nets.layers import Conv2dStaticSamePadding, MaxPool2dStaticSamePadding
 
+from nets.head import FCOSClsRegCntHead
+
 # ----------------------------------#
 #   Xception中深度可分离卷积
 #   先3x3的深度可分离卷积
@@ -508,13 +510,15 @@ class Retinanet(nn.Module):
         #
 
         self.num_classes = num_classes
-        self.cls_head = FCOSClsCenterHead(self.fpn_num_filters[phi], self.num_classes, num_layers=4, prior=0.01)
-        self.regcenter_head = FCOSRegHead(self.fpn_num_filters[phi], num_layers=4)
+        # self.cls_head = FCOSClsCenterHead(self.fpn_num_filters[phi], self.num_classes, num_layers=4, prior=0.01)
+        # self.regcenter_head = FCOSRegHead(self.fpn_num_filters[phi], num_layers=4)
+
+        self.clsregcnt_head = FCOSClsRegCntHead(self.fpn_num_filters[phi], self.num_classes, num_layers=4, prior=0.01, use_gn=True, cnt_on_reg=False)
 
         self.strides = torch.tensor([8, 16, 32, 64, 128], dtype=torch.float)
         self.positions = FCOSPositions(self.strides)
 
-        self.scales = nn.Parameter(torch.FloatTensor([1., 1., 1., 1., 1.]))
+        self.scales = nn.Parameter(torch.tensor([1., 1., 1., 1., 1.], dtype=torch.float32))
 
     # def _init_weights(self):
     #     if not self.pretrain_weights:
@@ -570,15 +574,17 @@ class Retinanet(nn.Module):
         for feature, scale in zip(features, self.scales):
             # 每层特征图的大小，如64×64
             self.fpn_feature_sizes.append([feature.shape[3], feature.shape[2]])
-            cls_outs, center_outs = self.cls_head(feature)
+            # cls_outs, center_outs = self.cls_head(feature)
+            cls_outs, reg_outs, center_outs = self.clsregcnt_head(feature)
             # [N,num_classes,H,W] -> [N,H,W,num_classes]
             cls_outs = cls_outs.permute(0, 2, 3, 1).contiguous()
             cls_heads.append(cls_outs)
 
-            reg_outs = self.regcenter_head(feature)
+            # reg_outs = self.regcenter_head(feature)
             # [N,4,H,W] -> [N,H,W,4]
             reg_outs = reg_outs.permute(0, 2, 3, 1).contiguous()
-            reg_outs = reg_outs * scale
+            # reg_outs = reg_outs * scale
+            reg_outs = reg_outs * torch.exp(scale)
             reg_heads.append(reg_outs)
             # [N,1,H,W] -> [N,H,W,1]
             center_outs = center_outs.permute(0, 2, 3, 1).contiguous()
