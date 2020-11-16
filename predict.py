@@ -17,10 +17,11 @@ retinanet = RetinaNet()
 #         r_image = retinanet.detect_image(image)
 #         r_image.show()
 
-try:
-    image = Image.open('img/9.jpg')
-except:
-    print('Open Error! Try again!')
-else:
-    r_image = retinanet.detect_image_fcos(image)
-    r_image.show()
+for i in range(1, 22):
+    try:
+        image = Image.open('img/%d.jpg'%(i))
+    except:
+        print('Open Error! Try again!')
+    else:
+        r_image = retinanet.detect_image_fcos(image)
+        r_image.show()
