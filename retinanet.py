@@ -35,7 +35,7 @@ def preprocess_input(image):
 #--------------------------------------------#
 class RetinaNet(object):
     _defaults = {
-        "model_path"    : 'model_data/checkpoint/Epoch71-Total_Loss0.9930-Val_Loss1.1982.pth',
+        "model_path"    : 'model_data/checkpoint/Epoch1-Total_Loss1.6482-Val_Loss1.4167.pth',
         "classes_path"  : 'model_data/voc_classes.txt',
         "phi"           : 2,
         "confidence"    : 0.5,
@@ -82,7 +82,7 @@ class RetinaNet(object):
             state_dict = torch.load(self.model_path)
         else:
             state_dict = torch.load(self.model_path, map_location=torch.device('cpu'))
-        self.net.load_state_dict(state_dict['net'])
+        self.net.load_state_dict(state_dict)
         self.net = nn.DataParallel(self.net)
         if self.cuda:
             self.net = self.net.cuda()

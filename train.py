@@ -273,8 +273,9 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
     # print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
     print('Total Loss: %.4f || Val Loss: %.4f || Learning rate: %.3g \n' % (total_loss/(epoch_size+1), val_loss/(epoch_size_val+1), get_lr(optimizer)))
 
-    # print('Saving state, iter:', str(epoch+1))
-    # torch.save(model.state_dict(), 'logs/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+    if (epoch + 1) % 2 == 0:
+        print('Saving weights, iter:', str(epoch+1))
+        torch.save(model.state_dict(), 'model_data/checkpoint/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
 
     return val_loss/(epoch_size_val+1), total_loss/(epoch_size+1)
 
@@ -300,9 +301,9 @@ if __name__ == "__main__":
     # 起始epoch(不需更改)
     start_epoch = 0
     # 冻结backbone训练模型，[start_epoch+1, Freeze_Epoch]
-    Freeze_Epoch = 100
+    Freeze_Epoch = 16
     # 解冻backbone训练模型，[Freeze_Epoch+1, Unfreeze_Epoch]
-    Unfreeze_Epoch = 200
+    Unfreeze_Epoch = 16
 
     # 冻结、解冻backbone训练模型的batch_size
     Freeze_Batch_size = 32
@@ -334,7 +335,7 @@ if __name__ == "__main__":
     #-------------------------------------------#
     # 【开关】是否fineturn
     if FineTurn:
-        model_path = "model_data/retinanet_resnet50.pth"
+        model_path = "model_data/checkpoint/Epoch1-Total_Loss1.6482-Val_Loss1.4167.pth"
         # 加快模型训练的效率
         print('Loading weights into state dict...')
         model_dict = model.state_dict()
@@ -344,25 +345,28 @@ if __name__ == "__main__":
             pretrained_dict = torch.load(model_path, map_location='cpu')
         pretrained_dict = {k: v for k, v in pretrained_dict.items() if np.shape(model_dict[k]) ==  np.shape(v)}
         model_dict.update(pretrained_dict)
-        model.load_state_dict(model_dict['net'])
+        model.load_state_dict(model_dict)
         print('Finished!')
 
     optimizer = optim.Adam(model.parameters(),lr)
     # 学习率阶层性下降
-    # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
+    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1, verbose=True)
     # 学习率余弦退火下降
     # T_0就是初始restart的epoch数目，T_mult就是重启之后因子，默认是1。我觉得可以这样理解，每个restart后，T_0 = T_0 * T_mult
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
+    # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=3)
 
     # 是否执行冻结backbone的训练（不需手动更改）
     freezeflag = True
     # 【开关】是否断点续训
     if RESUME:
-        path_checkpoint = "model_data/checkpoint/Epoch1-Total_Loss2.2986-Val_Loss1.7803.pth"  # 断点路径
-        checkpoint = torch.load(path_checkpoint)  # 加载断点
+        path_checkpoint = "model_data/checkpoint/Epoch1-checkpoint.pth"  # 断点路径
+        if Cuda:
+            checkpoint = torch.load(path_checkpoint)  # 加载断点
+        else:
+            checkpoint = torch.load(path_checkpoint, map_location='cpu')  # 加载断点
         print('Loading checkpoint into state dict...')
 
-        model.load_state_dict(checkpoint['net'])  # 加载模型可学习参数
+        # model.load_state_dict(checkpoint['net'])  # 加载模型可学习参数
 
         optimizer.load_state_dict(checkpoint['optimizer'])  # 加载优化器参数
         if Cuda:
@@ -443,21 +447,20 @@ if __name__ == "__main__":
 
         for epoch in range(start_epoch,Freeze_Epoch):
             val_loss, total_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
-            # lr_scheduler.step(val_loss)
-            lr_scheduler.step()
+            lr_scheduler.step(val_loss)
+            # lr_scheduler.step()
 
-            if epoch == 0 or (epoch + 1) % 10 == 0:
+            if (epoch + 1) % 2 == 0:
                 checkpoint = {
-                    "net": model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     "epoch": epoch,
                     'lr_scheduler': lr_scheduler.state_dict()
                 }
                 if not os.path.isdir("./model_data/checkpoint"):
                     os.mkdir("./model_data/checkpoint")
-                torch.save(checkpoint, './model_data/checkpoint/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % (
-                    (epoch + 1), total_loss , val_loss))
-                print('Saving state, iter:', str(epoch + 1))
+
+                print('Saving checkpoint, iter:', str(epoch + 1))
+                torch.save(checkpoint, './model_data/checkpoint/Epoch%d-checkpoint.pth' % (epoch + 1))
                 print('\n')
 
 
@@ -467,8 +470,8 @@ if __name__ == "__main__":
 
         if freezeflag:
             optimizer = optim.Adam(net.parameters(),lr)
-            # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=2, verbose=True)
-            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
+            lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1, verbose=True)
+            # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=3)
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
@@ -487,19 +490,18 @@ if __name__ == "__main__":
 
         for epoch in range(Freeze_Epoch,Unfreeze_Epoch):
             val_loss, total_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
-            # lr_scheduler.step(val_loss)
-            lr_scheduler.step()
+            lr_scheduler.step(val_loss)
+            # lr_scheduler.step()
 
-            if epoch == 0 or (epoch + 1) % 10 == 0:
+            if (epoch + 1) % 2 == 0:
                 checkpoint = {
-                    "net": model.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     "epoch": epoch,
                     'lr_scheduler': lr_scheduler.state_dict()
                 }
                 if not os.path.isdir("./model_data/checkpoint"):
                     os.mkdir("./model_data/checkpoint")
-                torch.save(checkpoint, './model_data/checkpoint/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth' % (
-                    (epoch + 1), total_loss , val_loss))
-                print('Saving state, iter:', str(epoch + 1))
+
+                print('Saving checkpoint, iter:', str(epoch + 1))
+                torch.save(checkpoint, './model_data/checkpoint/Epoch%d-checkpoint.pth' % (epoch + 1))
                 print('\n')
