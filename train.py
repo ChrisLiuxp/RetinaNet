@@ -298,6 +298,8 @@ if __name__ == "__main__":
     BiFPN_on = True
     # 是否使用Center_sample
     Center_sample = True
+    # 是否使用DiouLoss
+    DiouLoss = True
     # 是否断点续训
     RESUME = False
     # 是否加载模型进行FineTurn
@@ -401,7 +403,7 @@ if __name__ == "__main__":
         net = net.cuda()
 
     # focal_loss = FocalLoss()
-    fcos_loss = FCOSLoss(use_center_sample=Center_sample)
+    fcos_loss = FCOSLoss(use_center_sample=Center_sample, diou_loss=DiouLoss)
 
     # 0.1用于验证，0.9用于训练
     val_split = 0.1

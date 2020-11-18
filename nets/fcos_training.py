@@ -15,7 +15,8 @@ class FCOSLoss(nn.Module):
                  reg_weight=2.,
                  epsilon=1e-4,
                  center_sample_radius=1.5,
-                 use_center_sample=True):
+                 use_center_sample=False,
+                 diou_loss=False):
         super(FCOSLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -25,6 +26,7 @@ class FCOSLoss(nn.Module):
         self.mi = mi
         self.use_center_sample = use_center_sample
         self.center_sample_radius = center_sample_radius
+        self.diou_loss = diou_loss
 
     def forward(self, cls_heads, reg_heads, center_heads, batch_positions, annotations, cuda=True):
         """
@@ -73,8 +75,12 @@ class FCOSLoss(nn.Module):
                 valid_image_num += 1
                 one_image_cls_loss = self.compute_one_image_focal_loss(
                     per_image_cls_preds, per_image_targets)
-                one_image_reg_loss = self.compute_one_image_giou_loss(
-                    per_image_reg_preds, per_image_targets, cuda)
+                if self.diou_loss:
+                    one_image_reg_loss = self.compute_one_image_diou_loss(
+                        per_image_reg_preds, per_image_targets, cuda)
+                else:
+                    one_image_reg_loss = self.compute_one_image_giou_loss(
+                        per_image_reg_preds, per_image_targets, cuda)
                 one_image_center_ness_loss = self.compute_one_image_center_ness_loss(
                     per_image_center_preds, per_image_targets, cuda)
 
