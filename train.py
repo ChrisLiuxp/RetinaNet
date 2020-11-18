@@ -102,7 +102,7 @@ def fit_one_epoch(net,focal_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoc
     return val_loss/(epoch_size_val+1)
 
 
-def fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
+def fit_one_epoch_Plateau(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
     total_r_loss = 0
     total_c_loss = 0
     total_ctn_loss = 0
@@ -182,19 +182,12 @@ def fit_one_epoch_new(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,E
     return val_loss/(epoch_size_val+1)
 
 
-def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
+def fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
     total_r_loss = 0
     total_c_loss = 0
     total_ctn_loss = 0
     total_loss = 0
     val_loss = 0
-
-    # lr_scheduler = None
-    # if epoch == 0:
-    #     warmup_factor = 1. / 1000
-    #     warmup_iters = min(1000, len(gen) - 1)
-    #
-    #     lr_scheduler = warmup_lr_scheduler(optimizer, warmup_iters, warmup_factor)
 
     start_time = time.time()
     with tqdm(total=epoch_size,desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
@@ -242,9 +235,6 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
 
             start_time = time.time()
 
-            # if lr_scheduler is not None:
-            #     lr_scheduler.step()
-
     net.eval()
     print('Start Validation')
     with tqdm(total=epoch_size_val, desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
@@ -273,9 +263,22 @@ def fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
     # print('\nEpoch:'+ str(epoch+1) + '/' + str(Epoch))
     print('Total Loss: %.4f || Val Loss: %.4f || Learning rate: %.3g \n' % (total_loss/(epoch_size+1), val_loss/(epoch_size_val+1), get_lr(optimizer)))
 
+    # CosineAnnealingWarmRestarts更新学习率
+    lr_scheduler.step()
+
     if (epoch + 1) % 2 == 0:
-        print('Saving weights, iter:', str(epoch+1))
+        print('Saving weights and checkpoint, iter:', str(epoch+1))
         torch.save(model.state_dict(), 'model_data/checkpoint/Epoch%d-Total_Loss%.4f-Val_Loss%.4f.pth'%((epoch+1),total_loss/(epoch_size+1),val_loss/(epoch_size_val+1)))
+
+        checkpoint = {
+            'optimizer': optimizer.state_dict(),
+            "epoch": epoch,
+            'lr_scheduler': lr_scheduler.state_dict()
+        }
+        if not os.path.isdir("./model_data/checkpoint"):
+            os.mkdir("./model_data/checkpoint")
+        torch.save(checkpoint, './model_data/checkpoint/Epoch%d-checkpoint.pth' % (epoch + 1))
+        print('\n')
 
     return val_loss/(epoch_size_val+1), total_loss/(epoch_size+1)
 
@@ -303,9 +306,9 @@ if __name__ == "__main__":
     # 起始epoch(不需更改)
     start_epoch = 0
     # 冻结backbone训练模型，[start_epoch+1, Freeze_Epoch]
-    Freeze_Epoch = 24
+    Freeze_Epoch = 16
     # 解冻backbone训练模型，[Freeze_Epoch+1, Unfreeze_Epoch]
-    Unfreeze_Epoch = 24
+    Unfreeze_Epoch = 32
 
     # 冻结、解冻backbone训练模型的batch_size
     Freeze_Batch_size = 32
@@ -352,10 +355,10 @@ if __name__ == "__main__":
 
     optimizer = optim.Adam(model.parameters(),lr)
     # 学习率阶层性下降
-    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1, verbose=True)
+    # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1, verbose=True)
     # 学习率余弦退火下降
     # T_0就是初始restart的epoch数目，T_mult就是重启之后因子，默认是1。我觉得可以这样理解，每个restart后，T_0 = T_0 * T_mult
-    # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=3)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
     # 是否执行冻结backbone的训练（不需手动更改）
     freezeflag = True
@@ -448,23 +451,9 @@ if __name__ == "__main__":
             param.requires_grad = False
 
         for epoch in range(start_epoch,Freeze_Epoch):
-            val_loss, total_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
-            lr_scheduler.step(val_loss)
-            # lr_scheduler.step()
-
-            if (epoch + 1) % 2 == 0:
-                checkpoint = {
-                    'optimizer': optimizer.state_dict(),
-                    "epoch": epoch,
-                    'lr_scheduler': lr_scheduler.state_dict()
-                }
-                if not os.path.isdir("./model_data/checkpoint"):
-                    os.mkdir("./model_data/checkpoint")
-
-                print('Saving checkpoint, iter:', str(epoch + 1))
-                torch.save(checkpoint, './model_data/checkpoint/Epoch%d-checkpoint.pth' % (epoch + 1))
-                print('\n')
-
+            val_loss, total_loss = fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
+            # ReduceLROnPlateau更新学习率
+            # lr_scheduler.step(val_loss)
 
     if True:
         # 解冻backbone训练模型的初始学习率
@@ -472,8 +461,8 @@ if __name__ == "__main__":
 
         if freezeflag:
             optimizer = optim.Adam(net.parameters(),lr)
-            lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1, verbose=True)
-            # lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=3)
+            # lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1, verbose=True)
+            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=1, T_mult=2)
 
         train_dataset = RetinanetDataset(lines[:num_train], (input_shape[0], input_shape[1]))
         val_dataset = RetinanetDataset(lines[num_train:], (input_shape[0], input_shape[1]))
@@ -491,19 +480,6 @@ if __name__ == "__main__":
             param.requires_grad = True
 
         for epoch in range(Freeze_Epoch,Unfreeze_Epoch):
-            val_loss, total_loss = fit_one_epoch_warmup(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
-            lr_scheduler.step(val_loss)
-            # lr_scheduler.step()
-
-            if (epoch + 1) % 2 == 0:
-                checkpoint = {
-                    'optimizer': optimizer.state_dict(),
-                    "epoch": epoch,
-                    'lr_scheduler': lr_scheduler.state_dict()
-                }
-                if not os.path.isdir("./model_data/checkpoint"):
-                    os.mkdir("./model_data/checkpoint")
-
-                print('Saving checkpoint, iter:', str(epoch + 1))
-                torch.save(checkpoint, './model_data/checkpoint/Epoch%d-checkpoint.pth' % (epoch + 1))
-                print('\n')
+            val_loss, total_loss = fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
+            # ReduceLROnPlateau更新学习率
+            # lr_scheduler.step(val_loss)
