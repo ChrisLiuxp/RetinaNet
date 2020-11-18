@@ -222,6 +222,87 @@ class FCOSLoss(nn.Module):
 
         return gious_loss
 
+    def compute_one_image_diou_loss(self, per_image_reg_preds,
+                                    per_image_targets, cuda):
+        """
+        compute one image giou loss(reg loss)
+        per_image_reg_preds:[points_num,4]
+        per_image_targets:[anchor_num,8]
+        """
+        # only use positive points sample to compute reg loss
+        # device = per_image_reg_preds.device
+        per_image_reg_preds = per_image_reg_preds[per_image_targets[:, 4] > 0]
+        per_image_targets = per_image_targets[per_image_targets[:, 4] > 0]
+        positive_points_num = per_image_targets.shape[0]
+
+        if positive_points_num == 0:
+            if cuda:
+                return torch.tensor(0.).cuda()
+            else:
+                return torch.tensor(0.)
+
+        center_ness_targets = per_image_targets[:, 5]
+
+        pred_bboxes_xy_min = per_image_targets[:,
+                                               6:8] - per_image_reg_preds[:,
+                                                                          0:2]
+        pred_bboxes_xy_max = per_image_targets[:,
+                                               6:8] + per_image_reg_preds[:,
+                                                                          2:4]
+        gt_bboxes_xy_min = per_image_targets[:, 6:8] - per_image_targets[:,
+                                                                         0:2]
+        gt_bboxes_xy_max = per_image_targets[:, 6:8] + per_image_targets[:,
+                                                                         2:4]
+
+        pred_bboxes = torch.cat([pred_bboxes_xy_min, pred_bboxes_xy_max],
+                                axis=1)
+        gt_bboxes = torch.cat([gt_bboxes_xy_min, gt_bboxes_xy_max], axis=1)
+
+        overlap_area_top_left = torch.max(pred_bboxes[:, 0:2], gt_bboxes[:,
+                                                                         0:2])
+        overlap_area_bot_right = torch.min(pred_bboxes[:, 2:4], gt_bboxes[:,
+                                                                          2:4])
+        overlap_area_sizes = torch.clamp(overlap_area_bot_right -
+                                         overlap_area_top_left,
+                                         min=0)
+        overlap_area = overlap_area_sizes[:, 0] * overlap_area_sizes[:, 1]
+
+        # anchors and annotations convert format to [x1,y1,w,h]
+        pred_bboxes_w_h = pred_bboxes[:, 2:4] - pred_bboxes[:, 0:2] + 1
+        gt_bboxes_w_h = gt_bboxes[:, 2:4] - gt_bboxes[:, 0:2] + 1
+
+        # compute anchors_area and annotations_area
+        pred_bboxes_area = pred_bboxes_w_h[:, 0] * pred_bboxes_w_h[:, 1]
+        gt_bboxes_area = gt_bboxes_w_h[:, 0] * gt_bboxes_w_h[:, 1]
+
+        # compute union_area
+        union_area = pred_bboxes_area + gt_bboxes_area - overlap_area
+        union_area = torch.clamp(union_area, min=1e-4)
+        # compute ious between one image anchors and one image annotations
+        ious = overlap_area / union_area
+
+        pred_bboxes_ctr = (pred_bboxes[:, 2:4] + pred_bboxes[:, 0:2]) / 2
+        gt_bboxes_ctr = (gt_bboxes[:, 2:4] +
+                                  gt_bboxes[:, 0:2]) / 2
+        p2 = (pred_bboxes_ctr[:, 0] - gt_bboxes_ctr[:, 0]) ** 2 + (
+                pred_bboxes_ctr[:, 1] - gt_bboxes_ctr[:, 1]) ** 2
+
+        enclose_area_top_left = torch.min(pred_bboxes[:, 0:2], gt_bboxes[:,
+                                                                         0:2])
+        enclose_area_bot_right = torch.max(pred_bboxes[:, 2:4], gt_bboxes[:,
+                                                                          2:4])
+        enclose_area_sizes = torch.clamp(enclose_area_bot_right -
+                                         enclose_area_top_left,
+                                         min=1e-2)
+        c2 = (enclose_area_sizes[:, 0]) ** 2 + (enclose_area_sizes[:, 1]) ** 2
+
+        dious_loss = 1. - ious + p2 / c2
+        dious_loss = dious_loss.sum() / positive_points_num
+        dious_loss = 2. * dious_loss
+
+        return dious_loss
+
+
     def compute_one_image_center_ness_loss(self, per_image_center_preds,
                                            per_image_targets, cuda):
         """
