@@ -304,7 +304,7 @@ class FCOSLoss(nn.Module):
 
         dious_loss = 1. - ious + p2 / c2
         dious_loss = dious_loss.sum() / positive_points_num
-        dious_loss = 2. * dious_loss
+        dious_loss = self.reg_weight * dious_loss
 
         return dious_loss
 
