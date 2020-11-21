@@ -25,3 +25,11 @@ for i in range(1, 22):
     else:
         r_image = retinanet.detect_image_fcos(image)
         r_image.show()
+
+try:
+    image = Image.open('img/street.jpg')
+except:
+    print('Open Error! Try again!')
+else:
+    r_image = retinanet.detect_image_fcos(image)
+    r_image.show()
