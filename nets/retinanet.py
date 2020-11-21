@@ -587,7 +587,7 @@ class Retinanet(nn.Module):
             # reg_outs = reg_outs * scale
             # reg_outs = reg_outs * torch.exp(scale)
             reg_outs = scale(reg_outs)
-            reg_heads.append(torch.exp(reg_outs))
+            reg_heads.append(reg_outs)
             # [N,1,H,W] -> [N,H,W,1]
             center_outs = center_outs.permute(0, 2, 3, 1).contiguous()
             center_heads.append(center_outs)

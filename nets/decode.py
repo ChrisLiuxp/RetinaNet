@@ -30,7 +30,7 @@ class FCOSDecoder(nn.Module):
             for per_level_cls_head, per_level_reg_head, per_level_center_head, per_level_position in zip(
                     cls_heads, reg_heads, center_heads, batch_positions):
                 per_level_cls_head = torch.sigmoid(per_level_cls_head)
-                # per_level_reg_head = torch.exp(per_level_reg_head)
+                per_level_reg_head = torch.exp(per_level_reg_head)
                 per_level_center_head = torch.sigmoid(per_level_center_head)
 
                 # [B, H, W, C] -> [B, H×W, C]

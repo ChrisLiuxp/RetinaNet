@@ -47,7 +47,7 @@ class FCOSLoss(nn.Module):
         # reg_preds shape:[B, H1×W1+H2×W2+H3×W3+H4×W4+H5×W5, 4]
         # center_preds shape:[B, H1×W1+H2×W2+H3×W3+H4×W4+H5×W5, 1]
         cls_preds = torch.sigmoid(cls_preds)
-        # reg_preds = torch.exp(reg_preds)
+        reg_preds = torch.exp(reg_preds)
         center_preds = torch.sigmoid(center_preds)
 
         reg_preds = reg_preds.type_as(cls_preds)
@@ -413,12 +413,13 @@ class FCOSLoss(nn.Module):
         all_points_stride = torch.cat(all_points_stride, axis=1)
         # 至此，就消除了各个特征层的概念了，把所有的层都混一起了
 
+        reg_preds_exp = torch.exp(reg_preds)
         batch_targets = []
         # 遍历每个batch size中的每个图片的上的点、mi、GT标注
         # for per_image_position, per_image_mi, per_image_annotations in zip(
         #         all_points_position, all_points_mi, annotations):
         for per_image_position, per_image_mi, per_image_stride, per_image_annotations, per_image_reg_preds in zip(
-                all_points_position, all_points_mi, all_points_stride, annotations, reg_preds):
+                all_points_position, all_points_mi, all_points_stride, annotations, reg_preds_exp):
             if per_image_annotations.shape[0] != 0:
                 # 筛选GT对应的分类>=0的GT
                 per_image_annotations = per_image_annotations[
