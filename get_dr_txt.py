@@ -16,6 +16,7 @@ from nets.retinanet import Retinanet
 from PIL import Image,ImageFont, ImageDraw
 from utils.utils import non_max_suppression, bbox_iou, decodebox, letterbox_image, retinanet_correct_boxes
 from nets.decode import FCOSDecoder
+from tqdm import tqdm
 
 
 def preprocess_input(image):
@@ -31,8 +32,9 @@ class mAP_RetinaNet(RetinaNet):
     #   检测图片
     #---------------------------------------------------#
     def detect_image(self,image_id,image):
-        self.confidence = 0.05
-        f = open("./input/detection-results/"+image_id+".txt","w") 
+        self.confidence = 0.01
+        self.iou = 0.5
+        f = open("./input/detection-results/"+image_id+".txt","w")
         image_shape = np.array(np.shape(image)[0:2])
 
         crop_img = np.array(letterbox_image(image, self.image_size))
@@ -65,7 +67,7 @@ class mAP_RetinaNet(RetinaNet):
             batch_detections = batch_detections[0].cpu().numpy()
         except:
             return image
-            
+
         top_index = batch_detections[:,4] > self.confidence
         top_conf = batch_detections[top_index,4]
         top_label = np.array(batch_detections[top_index,-1],np.int32)
@@ -83,7 +85,7 @@ class mAP_RetinaNet(RetinaNet):
             f.write("%s %s %s %s %s %s\n" % (predicted_class, score[:6], str(int(left)), str(int(top)), str(int(right)),str(int(bottom))))
 
         f.close()
-        return 
+        return
 
 retinanet = mAP_RetinaNet()
 image_ids = open('VOCdevkit/VOC2007/ImageSets/Main/test.txt').read().strip().split()
@@ -96,13 +98,13 @@ if not os.path.exists("./input/images-optional"):
     os.makedirs("./input/images-optional")
 
 
-for image_id in image_ids:
+for image_id in tqdm(image_ids):
     image_path = "./VOCdevkit/VOC2007/JPEGImages/"+image_id+".jpg"
     image = Image.open(image_path)
     # 开启后在之后计算mAP可以可视化
     # image.save("./input/images-optional/"+image_id+".jpg")
     retinanet.detect_image(image_id,image)
-    print(image_id," done!")
-    
+    # print(image_id," done!")
+
 
 print("Conversion completed!")

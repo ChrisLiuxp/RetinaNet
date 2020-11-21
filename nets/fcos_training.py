@@ -28,7 +28,7 @@ class FCOSLoss(nn.Module):
         self.center_sample_radius = center_sample_radius
         self.diou_loss = diou_loss
 
-    def forward(self, cls_heads, reg_heads, center_heads, batch_positions, annotations, cuda=True):
+    def forward(self, cls_heads, reg_heads, center_heads, batch_positions, annotations, center_ness_on=True, cuda=True):
         """
         compute cls loss, reg loss and center-ness loss in one batch
         """
@@ -40,16 +40,16 @@ class FCOSLoss(nn.Module):
         # batch_positions shape:[[B, 80, 80, 2],[B, 40, 40, 2],[B, 20, 20, 2],[B, 10, 10, 2],[B, 5, 5, 2]]
         # annotations是包含batch_size个元素的list 元素shape:[一张图GT个数, 5] 例如[[262., 210., 460., 490.,  14.], [295., 305., 460., 471.,  11.]])
         cls_preds, reg_preds, center_preds, batch_targets = self.get_batch_position_annotations(
-            cls_heads, reg_heads, center_heads, batch_positions, annotations, cuda=cuda)
+            cls_heads, reg_heads, center_heads, batch_positions, annotations, center_ness_on=center_ness_on, cuda=cuda)
 
         # batch_targets shape:[batch_size, points_num, 8],8:l,t,r,b,class_index,center-ness_gt,point_ctr_x,point_ctr_y
         # cls_preds shape:[B, H1×W1+H2×W2+H3×W3+H4×W4+H5×W5, C]
         # reg_preds shape:[B, H1×W1+H2×W2+H3×W3+H4×W4+H5×W5, 4]
         # center_preds shape:[B, H1×W1+H2×W2+H3×W3+H4×W4+H5×W5, 1]
         cls_preds = torch.sigmoid(cls_preds)
-        reg_preds = torch.exp(reg_preds)
+        # reg_preds = torch.exp(reg_preds)
         center_preds = torch.sigmoid(center_preds)
-        # batch_targets[:, :, 5:6] = torch.sigmoid(batch_targets[:, :, 5:6])
+
         reg_preds = reg_preds.type_as(cls_preds)
         center_preds = center_preds.type_as(cls_preds)
         batch_targets = batch_targets.type_as(cls_preds)
@@ -222,7 +222,7 @@ class FCOSLoss(nn.Module):
         gious_loss = 1. - ious + (enclose_area - union_area) / enclose_area
         gious_loss = torch.clamp(gious_loss, min=-1.0, max=1.0)
         # use center_ness_targets as the weight of gious loss
-        gious_loss = gious_loss * center_ness_targets
+        # gious_loss = gious_loss * center_ness_targets
         gious_loss = gious_loss.sum() / positive_points_num
         gious_loss = self.reg_weight * gious_loss
 
@@ -341,7 +341,7 @@ class FCOSLoss(nn.Module):
 
     def get_batch_position_annotations(self, cls_heads, reg_heads,
                                        center_heads, batch_positions,
-                                       annotations, cuda):
+                                       annotations, center_ness_on, cuda):
         """
         Assign a ground truth target for each position on feature map
         """
@@ -417,8 +417,8 @@ class FCOSLoss(nn.Module):
         # 遍历每个batch size中的每个图片的上的点、mi、GT标注
         # for per_image_position, per_image_mi, per_image_annotations in zip(
         #         all_points_position, all_points_mi, annotations):
-        for per_image_position, per_image_mi, per_image_stride, per_image_annotations in zip(
-                all_points_position, all_points_mi, all_points_stride, annotations):
+        for per_image_position, per_image_mi, per_image_stride, per_image_annotations, per_image_reg_preds in zip(
+                all_points_position, all_points_mi, all_points_stride, annotations, reg_preds):
             if per_image_annotations.shape[0] != 0:
                 # 筛选GT对应的分类>=0的GT
                 per_image_annotations = per_image_annotations[
@@ -447,6 +447,7 @@ class FCOSLoss(nn.Module):
                 # per_image_position：[H1×W1+H2×W2+H3×W3+H4×W4+H5×W5,2] -> [H1×W1+H2×W2+H3×W3+H4×W4+H5×W5,1,2] -> [H1×W1+H2×W2+H3×W3+H4×W4+H5×W5,GT数量,4]
                 # per_image_position shape：[坐标点数量, GT数量, 4]，他就是坐标点数量个，GT数量行4列的一个张量，GT数量行4列数据是重复的中心点坐标
                 # per_image_position = per_image_position.unsqueeze(1).repeat(1, annotaion_num, 2)
+                per_image_position_center = per_image_position
                 per_image_position = per_image_position.unsqueeze(1).repeat(1, annotaion_num, 1)
 
                 if self.use_center_sample:
@@ -555,11 +556,40 @@ class FCOSLoss(nn.Module):
                         per_image_targets[positive_index, 0:4] = positive_candidates
                         per_image_targets[positive_index, 4:5] = sample_class_gts + 1
 
-                        l, t, r, b = per_image_targets[positive_index, 0:1], per_image_targets[positive_index, 1:2], per_image_targets[positive_index,2:3], per_image_targets[positive_index, 3:4]
-                        # per_image_targets shape: [中心点数量,6]，这里6代表l,t,r,b,class_index,center-ness_gt
-                        per_image_targets[positive_index, 5:6] = torch.sqrt(
-                            (torch.min(l, r) / torch.max(l, r)) *
-                            (torch.min(t, b) / torch.max(t, b)))
+                        if center_ness_on:
+                            l, t, r, b = per_image_targets[positive_index, 0:1], per_image_targets[positive_index, 1:2], per_image_targets[positive_index,2:3], per_image_targets[positive_index, 3:4]
+                            # per_image_targets shape: [中心点数量,6]，这里6代表l,t,r,b,class_index,center-ness_gt
+                            per_image_targets[positive_index, 5:6] = torch.sqrt(
+                                (torch.min(l, r) / torch.max(l, r)) *
+                                (torch.min(t, b) / torch.max(t, b)))
+                        else:
+                            pred_bboxes_xy_min = per_image_position_center[:, 0:2] - per_image_reg_preds[:, 0:2]
+                            pred_bboxes_xy_max = per_image_position_center[:, 0:2] + per_image_reg_preds[:, 2:4]
+                            gt_bboxes_xy_min = per_image_position_center[:, 0:2] - per_image_targets[:, 0:2]
+                            gt_bboxes_xy_max = per_image_position_center[:, 0:2] + per_image_targets[:, 2:4]
+
+                            pred_bboxes = torch.cat([pred_bboxes_xy_min, pred_bboxes_xy_max], axis=1)
+                            gt_bboxes = torch.cat([gt_bboxes_xy_min, gt_bboxes_xy_max], axis=1)
+
+                            overlap_area_top_left = torch.max(pred_bboxes[:, 0:2], gt_bboxes[:, 0:2])
+                            overlap_area_bot_right = torch.min(pred_bboxes[:, 2:4], gt_bboxes[:, 2:4])
+                            overlap_area_sizes = torch.clamp(overlap_area_bot_right - overlap_area_top_left, min=0)
+                            overlap_area = overlap_area_sizes[:, 0] * overlap_area_sizes[:, 1]
+
+                            # anchors and annotations convert format to [x1,y1,w,h]
+                            pred_bboxes_w_h = pred_bboxes[:, 2:4] - pred_bboxes[:, 0:2] + 1
+                            gt_bboxes_w_h = gt_bboxes[:, 2:4] - gt_bboxes[:, 0:2] + 1
+
+                            # compute anchors_area and annotations_area
+                            pred_bboxes_area = pred_bboxes_w_h[:, 0] * pred_bboxes_w_h[:, 1]
+                            gt_bboxes_area = gt_bboxes_w_h[:, 0] * gt_bboxes_w_h[:, 1]
+
+                            # compute union_area
+                            union_area = pred_bboxes_area + gt_bboxes_area - overlap_area
+                            union_area = torch.clamp(union_area, min=1e-4)
+                            # compute ious between one image anchors and one image annotations
+                            ious = overlap_area / union_area
+                            per_image_targets[positive_index, 5:6] = ious[positive_index].unsqueeze(1)
                     else:
                         # if a positive point sample have serveral object candidates,then choose the smallest area object candidate as the ground turth for this positive point sample
                         # sample_box_gts shape:[正样本坐标点数量,GT数量,4]，通过将GT角点右下角坐标减去左上角坐标得到框的宽高
@@ -586,10 +616,39 @@ class FCOSLoss(nn.Module):
                         per_image_targets[positive_index, 0:4] = final_candidate_reg_gts
                         per_image_targets[positive_index, 4:5] = final_candidate_cls_gts + 1
 
-                        l, t, r, b = per_image_targets[positive_index, 0:1], per_image_targets[positive_index, 1:2], per_image_targets[positive_index, 2:3], per_image_targets[positive_index, 3:4]
-                        per_image_targets[positive_index, 5:6] = torch.sqrt(
-                            (torch.min(l, r) / torch.max(l, r)) *
-                            (torch.min(t, b) / torch.max(t, b)))
+                        if center_ness_on:
+                            l, t, r, b = per_image_targets[positive_index, 0:1], per_image_targets[positive_index, 1:2], per_image_targets[positive_index, 2:3], per_image_targets[positive_index, 3:4]
+                            per_image_targets[positive_index, 5:6] = torch.sqrt(
+                                (torch.min(l, r) / torch.max(l, r)) *
+                                (torch.min(t, b) / torch.max(t, b)))
+                        else:
+                            pred_bboxes_xy_min = per_image_position_center[:, 0:2] - per_image_reg_preds[:, 0:2]
+                            pred_bboxes_xy_max = per_image_position_center[:, 0:2] + per_image_reg_preds[:, 2:4]
+                            gt_bboxes_xy_min = per_image_position_center[:, 0:2] - per_image_targets[:, 0:2]
+                            gt_bboxes_xy_max = per_image_position_center[:, 0:2] + per_image_targets[:, 2:4]
+
+                            pred_bboxes = torch.cat([pred_bboxes_xy_min, pred_bboxes_xy_max], axis=1)
+                            gt_bboxes = torch.cat([gt_bboxes_xy_min, gt_bboxes_xy_max], axis=1)
+
+                            overlap_area_top_left = torch.max(pred_bboxes[:, 0:2], gt_bboxes[:, 0:2])
+                            overlap_area_bot_right = torch.min(pred_bboxes[:, 2:4], gt_bboxes[:, 2:4])
+                            overlap_area_sizes = torch.clamp(overlap_area_bot_right - overlap_area_top_left, min=0)
+                            overlap_area = overlap_area_sizes[:, 0] * overlap_area_sizes[:, 1]
+
+                            # anchors and annotations convert format to [x1,y1,w,h]
+                            pred_bboxes_w_h = pred_bboxes[:, 2:4] - pred_bboxes[:, 0:2] + 1
+                            gt_bboxes_w_h = gt_bboxes[:, 2:4] - gt_bboxes[:, 0:2] + 1
+
+                            # compute anchors_area and annotations_area
+                            pred_bboxes_area = pred_bboxes_w_h[:, 0] * pred_bboxes_w_h[:, 1]
+                            gt_bboxes_area = gt_bboxes_w_h[:, 0] * gt_bboxes_w_h[:, 1]
+
+                            # compute union_area
+                            union_area = pred_bboxes_area + gt_bboxes_area - overlap_area
+                            union_area = torch.clamp(union_area, min=1e-4)
+                            # compute ious between one image anchors and one image annotations
+                            ious = overlap_area / union_area
+                            per_image_targets[positive_index, 5:6] = ious[positive_index].unsqueeze(1)
 
             per_image_targets = per_image_targets.unsqueeze(0)
             # batch_targets shape: [batch size,中心点数量,6]

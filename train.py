@@ -182,7 +182,7 @@ def fit_one_epoch_Plateau(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genv
     return val_loss/(epoch_size_val+1)
 
 
-def fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,cuda):
+def fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genval,Epoch,center_ness_on,cuda):
     total_r_loss = 0
     total_c_loss = 0
     total_ctn_loss = 0
@@ -207,7 +207,7 @@ def fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
             # images shape:[batch_size, 3, input_image_size, input_image_size]
             # targets是包含batch_size个元素的list 元素shape:[一张图GT个数, 5]
             cls_heads, reg_heads, center_heads, batch_positions = net(images)
-            cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets, cuda=cuda)
+            cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets, center_ness_on=center_ness_on, cuda=cuda)
             loss = cls_loss + reg_loss + center_ness_loss
             if cls_loss.item() == 0.0 or reg_loss.item() == 0.0:
                 optimizer.zero_grad()
@@ -252,7 +252,7 @@ def fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,genva
                     targets_val = [Variable(torch.from_numpy(ann).type(torch.FloatTensor)) for ann in targets_val]
                 optimizer.zero_grad()
                 cls_heads, reg_heads, center_heads, batch_positions = net(images_val)
-                cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets_val, cuda=cuda)
+                cls_loss, reg_loss, center_ness_loss = fcos_loss(cls_heads, reg_heads, center_heads, batch_positions, targets_val, center_ness_on=center_ness_on, cuda=cuda)
                 loss = cls_loss + reg_loss + center_ness_loss
                 val_loss += loss.item()
 
@@ -300,6 +300,8 @@ if __name__ == "__main__":
     Center_sample = True
     # 是否使用DiouLoss
     DiouLoss = True
+    # 是否使用centerness得分(否则为IoU得分)
+    center_ness_on = True
     # 是否断点续训
     RESUME = False
     # 是否加载模型进行FineTurn
@@ -453,7 +455,7 @@ if __name__ == "__main__":
             param.requires_grad = False
 
         for epoch in range(start_epoch,Freeze_Epoch):
-            val_loss, total_loss = fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,Cuda)
+            val_loss, total_loss = fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Freeze_Epoch,center_ness_on,Cuda)
             # ReduceLROnPlateau更新学习率
             # lr_scheduler.step(val_loss)
 
@@ -482,6 +484,6 @@ if __name__ == "__main__":
             param.requires_grad = True
 
         for epoch in range(Freeze_Epoch,Unfreeze_Epoch):
-            val_loss, total_loss = fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,Cuda)
+            val_loss, total_loss = fit_one_epoch_cossin(net,fcos_loss,epoch,epoch_size,epoch_size_val,gen,gen_val,Unfreeze_Epoch,center_ness_on,Cuda)
             # ReduceLROnPlateau更新学习率
             # lr_scheduler.step(val_loss)

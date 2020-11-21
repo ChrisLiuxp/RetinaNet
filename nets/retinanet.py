@@ -7,6 +7,7 @@ from utils.anchors import Anchors
 from nets.head import FCOSClsCenterHead, FCOSRegHead, FCOSPositions
 from nets.layers import MemoryEfficientSwish, Swish
 from nets.layers import Conv2dStaticSamePadding, MaxPool2dStaticSamePadding
+from nets.layers import Scale
 
 from nets.head import FCOSClsRegCntHead
 
@@ -518,8 +519,8 @@ class Retinanet(nn.Module):
         self.strides = torch.tensor([8, 16, 32, 64, 128], dtype=torch.float)
         self.positions = FCOSPositions(self.strides)
 
-        self.scales = nn.Parameter(torch.tensor([1., 1., 1., 1., 1.], dtype=torch.float32))
-
+        # self.scales = nn.Parameter(torch.tensor([1., 1., 1., 1., 1.], dtype=torch.float32))
+        self.scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
     # def _init_weights(self):
     #     if not self.pretrain_weights:
     #         print("_init_weights")
@@ -584,8 +585,9 @@ class Retinanet(nn.Module):
             # [N,4,H,W] -> [N,H,W,4]
             reg_outs = reg_outs.permute(0, 2, 3, 1).contiguous()
             # reg_outs = reg_outs * scale
-            reg_outs = reg_outs * torch.exp(scale)
-            reg_heads.append(reg_outs)
+            # reg_outs = reg_outs * torch.exp(scale)
+            reg_outs = scale(reg_outs)
+            reg_heads.append(torch.exp(reg_outs))
             # [N,1,H,W] -> [N,H,W,1]
             center_outs = center_outs.permute(0, 2, 3, 1).contiguous()
             center_heads.append(center_outs)
