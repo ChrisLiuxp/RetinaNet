@@ -1,11 +1,12 @@
 import os
 import random 
  
-xmlfilepath=r'./VOCdevkit/VOC2007/Annotations'
-saveBasePath=r"./VOCdevkit/VOC2007/ImageSets/Main/"
- 
-trainval_percent=1
-train_percent=1
+xmlfilepath=r'D:/Software/DevelopTool/PyCharm/EfficientJobRoom/retinanet-pytorch-master/VOCdevkit/VOC2007/Annotations'
+saveBasePath=r"D:/Software/DevelopTool/PyCharm/EfficientJobRoom/retinanet-pytorch-master/VOCdevkit/VOC2007/ImageSets/Main/"
+
+## 0.7train 0.1val 0.2test
+trainval_percent=0.8
+train_percent=0.7
 
 temp_xml = os.listdir(xmlfilepath)
 total_xml = []
