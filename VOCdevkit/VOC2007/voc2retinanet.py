@@ -4,9 +4,9 @@ import random
 xmlfilepath=r'D:/Software/DevelopTool/PyCharm/EfficientJobRoom/retinanet-pytorch-master/VOCdevkit/VOC2007/Annotations'
 saveBasePath=r"D:/Software/DevelopTool/PyCharm/EfficientJobRoom/retinanet-pytorch-master/VOCdevkit/VOC2007/ImageSets/Main/"
 
-## 0.7train 0.1val 0.2test
+## 0.8train 0.2test（在训练时train的0.1用于验证，0.9用于训练）
 trainval_percent=0.8
-train_percent=0.7
+train_percent=1
 
 temp_xml = os.listdir(xmlfilepath)
 total_xml = []
