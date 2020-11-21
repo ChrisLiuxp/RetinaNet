@@ -85,12 +85,10 @@ def log_average_miss_rate(precision, fp_cumsum, num_images):
         log-average miss rate:
             Calculated by averaging miss rates at 9 evenly spaced FPPI points
             between 10e-2 and 10e0, in log-space.
-
         output:
                 lamr | log-average miss rate
                 mr | miss rate
                 fppi | false positives per image
-
         references:
             [1] Dollar, Piotr, et al. "Pedestrian Detection: An Evaluation of the
                State of the Art." Pattern Analysis and Machine Intelligence, IEEE
@@ -247,7 +245,7 @@ def draw_plot_func(dictionary, n_classes, window_title, plot_title, x_label, out
     sorted_dic_by_value = sorted(dictionary.items(), key=operator.itemgetter(1))
     # unpacking the list of tuples into two lists
     sorted_keys, sorted_values = zip(*sorted_dic_by_value)
-    # 
+    #
     if true_p_bar != "":
         """
          Special case to draw in:
@@ -310,7 +308,7 @@ def draw_plot_func(dictionary, n_classes, window_title, plot_title, x_label, out
     dpi = fig.dpi
     height_pt = n_classes * (tick_font_size * 1.4) # 1.4 (some spacing)
     height_in = height_pt / dpi
-    # compute the required figure height 
+    # compute the required figure height
     top_margin = 0.15 # in percentage of the figure height
     bottom_margin = 0.05 # in percentage of the figure height
     figure_height = height_in / (1 - top_margin - bottom_margin)
@@ -346,7 +344,10 @@ if os.path.exists(results_files_path): # if it exist already
 
 os.makedirs(results_files_path)
 if draw_plot:
-    os.makedirs(os.path.join(results_files_path, "classes"))
+    os.makedirs(os.path.join(results_files_path, "AP"))
+    os.makedirs(os.path.join(results_files_path, "F1"))
+    os.makedirs(os.path.join(results_files_path, "Recall"))
+    os.makedirs(os.path.join(results_files_path, "Precision"))
 if show_animation:
     os.makedirs(os.path.join(results_files_path, "images", "detections_one_by_one"))
 
@@ -503,6 +504,7 @@ lamr_dictionary = {}
 with open(results_files_path + "/results.txt", 'w') as results_file:
     results_file.write("# AP and precision/recall per class\n")
     count_true_positives = {}
+
     for class_index, class_name in enumerate(gt_classes):
         count_true_positives[class_name] = 0
         """
@@ -517,8 +519,14 @@ with open(results_files_path + "/results.txt", 'w') as results_file:
         nd = len(dr_data)
         tp = [0] * nd # creates an array of zeros of size nd
         fp = [0] * nd
+        score = [0] * nd
+        score05_idx = 0
         for idx, detection in enumerate(dr_data):
             file_id = detection["file_id"]
+            score[idx]   = float(detection["confidence"])
+            if score[idx] > 0.5:
+                score05_idx = idx
+
             if show_animation:
                 # find ground truth image
                 ground_truth_img = glob.glob1(IMG_PATH, file_id + ".*")
@@ -652,7 +660,6 @@ with open(results_files_path + "/results.txt", 'w') as results_file:
                 # save the image with all the objects drawn to it
                 cv2.imwrite(img_cumulative_path, img_cumulative)
 
-        #print(tp)
         # compute precision/recall
         cumsum = 0
         for idx, val in enumerate(fp):
@@ -664,6 +671,7 @@ with open(results_files_path + "/results.txt", 'w') as results_file:
             cumsum += val
         #print(tp)
         rec = tp[:]
+
         for idx, val in enumerate(tp):
             rec[idx] = float(tp[idx]) / gt_counter_per_class[class_name]
         #print(rec)
@@ -671,10 +679,20 @@ with open(results_files_path + "/results.txt", 'w') as results_file:
         for idx, val in enumerate(tp):
             prec[idx] = float(tp[idx]) / (fp[idx] + tp[idx])
         #print(prec)
-
         ap, mrec, mprec = voc_ap(rec[:], prec[:])
+        F1 = np.array(rec)*np.array(prec)/(np.array(prec)+np.array(rec))*2
+
         sum_AP += ap
         text = "{0:.2f}%".format(ap*100) + " = " + class_name + " AP " #class_name + " AP = {0:.2f}%".format(ap*100)
+
+        if len(prec)>0:
+            F1_text = "{0:.2f}".format(F1[score05_idx]) + " = " + class_name + " F1 "
+            Recall_text = "{0:.2f}%".format(rec[score05_idx]*100) + " = " + class_name + " Recall "
+            Precision_text = "{0:.2f}%".format(prec[score05_idx]*100) + " = " + class_name + " Precision "
+        else:
+            F1_text = "0.00" + " = " + class_name + " F1 "
+            Recall_text = "0.00%" + " = " + class_name + " Recall "
+            Precision_text = "0.00%" + " = " + class_name + " Precision "
         """
          Write to results.txt
         """
@@ -682,7 +700,8 @@ with open(results_files_path + "/results.txt", 'w') as results_file:
         rounded_rec = [ '%.2f' % elem for elem in rec ]
         results_file.write(text + "\n Precision: " + str(rounded_prec) + "\n Recall :" + str(rounded_rec) + "\n\n")
         if not args.quiet:
-            print(text)
+            print(text + "\t||\tscore_threhold=0.5 : " + "F1=" + "{0:.2f}".format(F1[score05_idx])\
+                 + " ; Recall=" + "{0:.2f}%".format(rec[score05_idx]*100) + " ; Precision=" + "{0:.2f}%".format(prec[score05_idx]*100))
         ap_dictionary[class_name] = ap
 
         n_images = counter_images_per_class[class_name]
@@ -713,11 +732,42 @@ with open(results_files_path + "/results.txt", 'w') as results_file:
             axes.set_xlim([0.0,1.0])
             axes.set_ylim([0.0,1.05]) # .05 to give some extra space
             # Alternative option -> wait for button to be pressed
-            #while not plt.waitforbuttonpress(): pass # wait for key display
+            # while not plt.waitforbuttonpress(): pass # wait for key display
             # Alternative option -> normal display
-            #plt.show()
+            # plt.show()
+
             # save the plot
-            fig.savefig(results_files_path + "/classes/" + class_name + ".png")
+            fig.savefig(results_files_path + "/AP/" + class_name + ".png")
+            plt.cla() # clear axes for next plot
+
+            plt.plot(score, F1, "-", color='orangered')
+            plt.title('class: ' + F1_text + "\nscore_threhold=0.5")
+            plt.xlabel('Score_Threhold')
+            plt.ylabel('F1')
+            axes = plt.gca() # gca - get current axes
+            axes.set_xlim([0.0,1.0])
+            axes.set_ylim([0.0,1.05]) # .05 to give some extra space
+            fig.savefig(results_files_path + "/F1/" + class_name + ".png")
+            plt.cla() # clear axes for next plot
+
+            plt.plot(score, rec, "-H", color='gold')
+            plt.title('class: ' + Recall_text + "\nscore_threhold=0.5")
+            plt.xlabel('Score_Threhold')
+            plt.ylabel('Recall')
+            axes = plt.gca() # gca - get current axes
+            axes.set_xlim([0.0,1.0])
+            axes.set_ylim([0.0,1.05]) # .05 to give some extra space
+            fig.savefig(results_files_path + "/Recall/" + class_name + ".png")
+            plt.cla() # clear axes for next plot
+
+            plt.plot(score, prec, "-s", color='palevioletred')
+            plt.title('class: ' + Precision_text + "\nscore_threhold=0.5")
+            plt.xlabel('Score_Threhold')
+            plt.ylabel('Precision')
+            axes = plt.gca() # gca - get current axes
+            axes.set_xlim([0.0,1.0])
+            axes.set_ylim([0.0,1.05]) # .05 to give some extra space
+            fig.savefig(results_files_path + "/Precision/" + class_name + ".png")
             plt.cla() # clear axes for next plot
 
     if show_animation:
